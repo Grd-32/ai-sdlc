@@ -1,0 +1,558 @@
+// AI-SDLC Control Plane
+// Phase 1: tenant-aware domain foundation for organizations, repositories, evidence, and governance records.
+// Phase 12: adds PullRequest.headSha / githubCheckRunId / lastAnalyzedSha for idempotent Check Run
+// publishing, and additions/deletions/changedFilesCount (replacing a `metadata` field that
+// apps/api/src/webhooks.ts was already writing to but that never existed on this model).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  SECURITY // legacy alias — treat as SECURITY_ADMIN in authorization
+  SECURITY_ADMIN
+  SECURITY_ANALYST
+  ENGINEER
+  REVIEWER
+  VIEWER
+  AUDITOR
+}
+
+enum IdentityProviderType {
+  OIDC
+  SAML
+}
+
+enum OrganizationEnvironment {
+  PRODUCTION
+  STAGING
+  DEVELOPMENT
+}
+
+enum AIInvolvement {
+  YES
+  NO
+  UNKNOWN
+}
+
+enum ProvenanceSource {
+  DEVELOPER_DECLARED
+  AGENT_TELEMETRY
+  GIT_METADATA
+  IDE_SIGNAL
+  BEHAVIORAL_INFERENCE
+  CI_SIGNAL
+  UNKNOWN
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum PolicyAction {
+  ALLOW
+  REVIEW
+  BLOCK
+}
+
+enum EvidenceStatus {
+  PASS
+  FAIL
+  UNKNOWN
+  NOT_RUN
+  NOT_APPLICABLE
+}
+
+enum ReviewDecision {
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+model Organization {
+  id          String              @id @default(cuid())
+  name        String
+  slug        String              @unique
+  ssoEnforced Boolean             @default(false)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  members     OrganizationMember[]
+  installations GitHubInstallation[]
+  repositories Repository[]
+  pullRequests PullRequest[]
+  commits     Commit[]
+  aiActivities AIActivity[]
+  codeChanges CodeChange[]
+  findings    SecurityFinding[]
+  riskAssessments RiskAssessment[]
+  policies    Policy[]
+  policyRules PolicyRule[]
+  policyDecisions PolicyDecision[]
+  reviews     Review[]
+  evidence    Evidence[]
+  passports   ChangePassport[]
+  auditEvents AuditEvent[]
+  webhookEvents GitHubWebhookEvent[]
+  domains     OrganizationDomain[]
+  environments OrganizationEnvironmentConfig[]
+  identityProviders IdentityProvider[]
+  scimTokens  ScimBearerToken[]
+}
+
+model User {
+  id            String              @id @default(cuid())
+  email         String              @unique
+  name          String?
+  avatarUrl     String?
+  githubUserId  String?             @unique
+  username      String?
+  active        Boolean             @default(true)
+  externalId    String?             // SCIM / IdP subject identifier
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  memberships   OrganizationMember[]
+  reviews       Review[]
+  auditEvents   AuditEvent[]
+  sessions      Session[]
+}
+
+model OrganizationMember {
+  id             String          @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrganizationRole @default(VIEWER)
+  externalId     String?         // SCIM external identifier (idempotent provisioning)
+  scimActive     Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@unique([organizationId, externalId])
+  @@index([organizationId, userId])
+}
+
+model GitHubInstallation {
+  id                String      @id @default(cuid())
+  organizationId    String
+  githubInstallationId String      @unique
+  appId             String?
+  accountLogin      String?
+  accountType       String?
+  permissions       Json?
+  webhookSecret     String?
+  active            Boolean     @default(true)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repositories      Repository[]
+  webhookEvents     GitHubWebhookEvent[]
+}
+
+model GitHubWebhookEvent {
+  id             String    @id @default(cuid())
+  organizationId  String?
+  installationId  String?
+  repositoryId    String?
+  provider        String    @default("GITHUB")
+  eventType       String
+  deliveryId      String
+  payloadHash     String
+  payload         Json
+  status          String    @default("RECEIVED")
+  createdAt       DateTime  @default(now())
+  processedAt     DateTime?
+
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  installation    GitHubInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
+  repository      Repository? @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, deliveryId])
+  @@index([provider, eventType, createdAt])
+}
+
+model Repository {
+  id                String       @id @default(cuid())
+  organizationId    String
+  githubInstallationId String?
+  provider          String       @default("GITHUB")
+  externalId        String?
+  owner             String
+  name              String
+  defaultBranch     String?
+  enabled           Boolean      @default(true)
+  criticality       String       @default("MEDIUM")
+  metadata          Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  installation      GitHubInstallation? @relation(fields: [githubInstallationId], references: [id])
+  pullRequests      PullRequest[]
+  commits           Commit[]
+  findings          SecurityFinding[]
+  evidence          Evidence[]
+  webhookEvents     GitHubWebhookEvent[]
+
+  @@unique([organizationId, provider, owner, name])
+  @@index([organizationId, enabled])
+}
+
+model PullRequest {
+  id                String        @id @default(cuid())
+  organizationId    String
+  repositoryId      String
+  provider          String        @default("GITHUB")
+  externalId        String?
+  number            Int
+  title             String
+  state             String        @default("OPEN")
+  authorLogin       String?
+  sourceBranch      String?
+  targetBranch      String?
+  headSha           String?
+  additions         Int           @default(0)
+  deletions         Int           @default(0)
+  changedFilesCount Int           @default(0)
+  githubCheckRunId  String?
+  lastAnalyzedSha   String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  mergedAt          DateTime?
+
+  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repository        Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  commits           Commit[]
+  aiActivities      AIActivity[]
+  codeChanges       CodeChange[]
+  findings          SecurityFinding[]
+  riskAssessments   RiskAssessment[]
+  policyDecisions   PolicyDecision[]
+  reviews           Review[]
+  evidence          Evidence[]
+  passports         ChangePassport[]
+
+  @@unique([repositoryId, provider, externalId])
+  @@index([organizationId, state])
+}
+
+model Commit {
+  id              String     @id @default(cuid())
+  organizationId  String
+  repositoryId    String
+  pullRequestId   String?
+  sha             String
+  message         String
+  authorName      String?
+  authorEmail     String?
+  committedAt     DateTime?
+  createdAt       DateTime   @default(now())
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repository      Repository   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  pullRequest     PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+
+  @@unique([repositoryId, sha])
+  @@index([organizationId, committedAt])
+}
+
+model AIActivity {
+  id             String            @id @default(cuid())
+  organizationId String
+  repositoryId   String?
+  pullRequestId  String?
+  agent          String
+  model          String?
+  involvement    AIInvolvement     @default(UNKNOWN)
+  confidence     Float             @default(0)
+  source         ProvenanceSource  @default(UNKNOWN)
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest    PullRequest?      @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, involvement, confidence])
+}
+
+model CodeChange {
+  id             String      @id @default(cuid())
+  organizationId String
+  pullRequestId  String
+  filePath       String
+  sensitiveAreas String[]   @default([])
+  additions      Int         @default(0)
+  deletions      Int         @default(0)
+  status         String      @default("PENDING")
+  createdAt      DateTime    @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest    PullRequest  @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, pullRequestId])
+}
+
+model SecurityFinding {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  repositoryId       String?
+  pullRequestId      String?
+  provider           String
+  providerFindingId  String?
+  category           String?
+  severity           String       @default("MEDIUM")
+  title              String
+  description        String?
+  file               String?
+  line               Int?
+  ruleId             String?
+  status             String       @default("OPEN")
+  metadata           Json?
+  createdAt          DateTime     @default(now())
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repository         Repository?  @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  pullRequest        PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, severity])
+}
+
+model RiskAssessment {
+  id             String      @id @default(cuid())
+  organizationId String
+  pullRequestId  String?
+  score          Float
+  level          RiskLevel
+  modelVersion   String      @default("risk-v1")
+  factors        Json?
+  explanation    String?
+  createdAt      DateTime    @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest    PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, level])
+}
+
+model Policy {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  enabled        Boolean      @default(true)
+  version        String       @default("v1")
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  policyRules    PolicyRule[]
+  decisions      PolicyDecision[]
+
+  @@index([organizationId, enabled])
+}
+
+model PolicyRule {
+  id                      String       @id @default(cuid())
+  organizationId          String
+  policyId                String
+  name                    String
+  aiInvolved              Boolean?
+  sensitiveAreas          String[]     @default([])
+  riskAtLeast             Int?
+  repositoryCriticalityIn String[]     @default([])
+  action                  PolicyAction
+  requiredApprovals       String[]     @default([])
+  reason                  String?
+  precedence              Int          @default(0)
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  policy       Policy       @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, policyId, precedence])
+}
+
+model PolicyDecision {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  pullRequestId      String?
+  policyId           String?
+  action             PolicyAction
+  matchedRuleIds     String[]     @default([])
+  requiredApprovals  String[]     @default([])
+  explanation        String?
+  createdAt          DateTime     @default(now())
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  policy             Policy?      @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  pullRequest        PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, action])
+}
+
+model Review {
+  id             String         @id @default(cuid())
+  organizationId String
+  pullRequestId  String?
+  reviewerId     String?
+  decision       ReviewDecision
+  status         String         @default("PENDING")
+  comment        String?
+  createdAt      DateTime       @default(now())
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest    PullRequest?   @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  reviewer       User?          @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+}
+
+model Evidence {
+  id             String          @id @default(cuid())
+  organizationId String
+  pullRequestId  String?
+  repositoryId   String?
+  type           String
+  status         EvidenceStatus
+  source         String
+  details        String?
+  metadata       Json?
+  externalRef    String?
+  createdAt      DateTime        @default(now())
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest    PullRequest?    @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  repository     Repository?     @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, type, status])
+}
+
+model ChangePassport {
+  id             String      @id @default(cuid())
+  organizationId String
+  pullRequestId  String?
+  status         String      @default("DRAFT")
+  summary        String?
+  payload        Json
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest    PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([pullRequestId])
+}
+
+model AuditEvent {
+  id             String       @id @default(cuid())
+  organizationId String?
+  actorId        String?
+  eventType      String
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actor          User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@index([organizationId, eventType, createdAt])
+}
+
+model SystemHealth {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Milestone A — server-side sessions with revocation support
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+// Milestone A — enterprise SSO (OIDC / SAML) configuration per organization
+model IdentityProvider {
+  id             String               @id @default(cuid())
+  organizationId String
+  type           IdentityProviderType
+  name           String
+  enabled        Boolean              @default(false)
+  issuer         String?
+  clientId       String?
+  metadata       Json?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, enabled])
+}
+
+// Milestone A — SCIM 2.0 bearer tokens (hashed at rest)
+model ScimBearerToken {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  tokenHash      String    @unique
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// Milestone A — verified email domains for SSO enforcement
+model OrganizationDomain {
+  id                String   @id @default(cuid())
+  organizationId    String
+  domain            String
+  verified          Boolean  @default(false)
+  verificationToken String?
+  createdAt         DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, domain])
+  @@index([domain])
+}
+
+// Milestone A — workspace/environment dimension for future policy scoping
+model OrganizationEnvironmentConfig {
+  id             String                  @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  environment    OrganizationEnvironment @default(DEVELOPMENT)
+  createdAt      DateTime                @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, slug])
+}
