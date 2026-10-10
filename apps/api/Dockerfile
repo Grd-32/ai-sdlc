@@ -10,6 +10,8 @@ COPY apps/api/package.json ./apps/api/
 COPY packages/db/package.json ./packages/db/
 COPY packages/github/package.json ./packages/github/
 COPY packages/provenance/package.json ./packages/provenance/
+COPY scripts/run-with-env.mjs ./scripts/run-with-env.mjs
+COPY packages/db/prisma/schema.prisma ./packages/db/prisma/schema.prisma
 RUN pnpm install --frozen-lockfile
 
 FROM base AS builder

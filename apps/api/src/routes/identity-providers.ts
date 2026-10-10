@@ -8,6 +8,7 @@
 import type { Hono } from "hono";
 import { prisma, recordAuditEvent } from "@ai-sdlc/db";
 import { requireAuth, requireOrganizationRole } from "../middleware/auth.js";
+import { redactSensitiveFields, redactSensitiveJsonContainer } from "../security/redaction.js";
 import type { AppEnv } from "../types.js";
 
 const VALID_TYPES = new Set(["OIDC", "SAML"]);
@@ -50,11 +51,15 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
       const type = typeof body?.type === "string" ? body.type : "";
       if (!name || !VALID_TYPES.has(type)) {
         return c.json(
-          { data: null, error: { code: "VALIDATION_ERROR", message: "name and type (OIDC|SAML) are required" } },
+          {
+            data: null,
+            error: { code: "VALIDATION_ERROR", message: "name and type (OIDC|SAML) are required" },
+          },
           400,
         );
       }
 
+      const metadata = redactSensitiveJsonContainer(body?.metadata);
       const provider = await prisma.identityProvider.create({
         data: {
           organizationId,
@@ -63,7 +68,7 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
           enabled: false,
           issuer: typeof body?.issuer === "string" ? body.issuer.trim() : undefined,
           clientId: typeof body?.clientId === "string" ? body.clientId.trim() : undefined,
-          metadata: typeof body?.metadata === "object" && body.metadata ? body.metadata : undefined,
+          metadata,
         },
       });
 
@@ -74,7 +79,7 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
         metadata: { providerId: provider.id, type, name },
       });
 
-      return c.json({ data: provider, error: null }, 201);
+      return c.json({ data: redactSensitiveFields(provider), error: null }, 201);
     },
   );
 
@@ -88,9 +93,14 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
       const providerId = c.req.param("providerId");
       const body = await c.req.json().catch(() => null);
 
-      const existing = await prisma.identityProvider.findFirst({ where: { id: providerId, organizationId } });
+      const existing = await prisma.identityProvider.findFirst({
+        where: { id: providerId, organizationId },
+      });
       if (!existing) {
-        return c.json({ data: null, error: { code: "NOT_FOUND", message: "Identity provider not found" } }, 404);
+        return c.json(
+          { data: null, error: { code: "NOT_FOUND", message: "Identity provider not found" } },
+          404,
+        );
       }
 
       const data: {
@@ -105,7 +115,9 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
       if (typeof body?.enabled === "boolean") data.enabled = body.enabled;
       if (typeof body?.issuer === "string") data.issuer = body.issuer.trim() || null;
       if (typeof body?.clientId === "string") data.clientId = body.clientId.trim() || null;
-      if (typeof body?.metadata === "object" && body.metadata) data.metadata = body.metadata;
+      if (typeof body?.metadata === "object" && body.metadata) {
+        data.metadata = redactSensitiveJsonContainer(body.metadata);
+      }
 
       const provider = await prisma.identityProvider.update({ where: { id: providerId }, data });
 
@@ -113,10 +125,10 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
         organizationId,
         eventType: "IDENTITY_PROVIDER_UPDATED",
         actorId,
-        metadata: { providerId, changes: data },
+        metadata: { providerId, changes: redactSensitiveFields(data) },
       });
 
-      return c.json({ data: provider, error: null });
+      return c.json({ data: redactSensitiveFields(provider), error: null });
     },
   );
 
@@ -129,9 +141,14 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
       const actorId = c.get("userId");
       const providerId = c.req.param("providerId");
 
-      const existing = await prisma.identityProvider.findFirst({ where: { id: providerId, organizationId } });
+      const existing = await prisma.identityProvider.findFirst({
+        where: { id: providerId, organizationId },
+      });
       if (!existing) {
-        return c.json({ data: null, error: { code: "NOT_FOUND", message: "Identity provider not found" } }, 404);
+        return c.json(
+          { data: null, error: { code: "NOT_FOUND", message: "Identity provider not found" } },
+          404,
+        );
       }
 
       await prisma.identityProvider.delete({ where: { id: providerId } });
@@ -159,7 +176,10 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
 
       if (typeof body?.ssoEnforced !== "boolean") {
         return c.json(
-          { data: null, error: { code: "VALIDATION_ERROR", message: "ssoEnforced boolean is required" } },
+          {
+            data: null,
+            error: { code: "VALIDATION_ERROR", message: "ssoEnforced boolean is required" },
+          },
           400,
         );
       }
@@ -177,7 +197,8 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
               data: null,
               error: {
                 code: "SSO_NOT_READY",
-                message: "SSO enforcement requires a verified domain and an enabled identity provider",
+                message:
+                  "SSO enforcement requires a verified domain and an enabled identity provider",
               },
             },
             400,

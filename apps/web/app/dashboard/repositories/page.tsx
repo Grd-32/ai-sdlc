@@ -66,11 +66,17 @@ function installErrorMessage(code: string): string {
     case "missing_installation_id":
       return "GitHub didn't return an installation ID. Try installing again.";
     case "missing_organization":
-      return "Missing organization context. Try installing again from this page.";
+      return "GitHub did not return the organization context. Start the install again from this page.";
+    case "sign_in_required":
+      return "Sign in again before connecting the GitHub App.";
     case "forbidden":
       return "You need admin access to this organization to connect a GitHub installation.";
+    case "app_not_configured":
+      return "GitHub App installation is not configured. Set NEXT_PUBLIC_GITHUB_APP_SLUG and rebuild the web service.";
     case "github_fetch_failed":
       return "Couldn't fetch installation details from GitHub. Try again in a moment.";
+    case "repository_sync_failed":
+      return "The GitHub App is linked, but repository synchronization failed. Try the setup flow again.";
     default:
       return "Something went wrong connecting the GitHub App.";
   }
@@ -98,7 +104,7 @@ export default async function RepositoriesPage({
   // `environment:` block.
   const appSlug = process.env["NEXT_PUBLIC_GITHUB_APP_SLUG"];
   const installUrl = appSlug
-    ? `https://github.com/apps/${appSlug}/installations/new?state=${selectedOrg.id}`
+    ? `/api/github/installations/start?organizationId=${encodeURIComponent(selectedOrg.id)}`
     : undefined;
 
   return (
@@ -108,13 +114,19 @@ export default async function RepositoriesPage({
           <h1 className="text-2xl font-semibold text-slate-900">Repositories</h1>
           <p className="text-sm text-slate-500">{selectedOrg.name}</p>
         </div>
-        {installUrl && (
+        {installUrl ? (
           <a
             href={installUrl}
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
           >
             Install GitHub App
           </a>
+        ) : (
+          <p className="max-w-sm text-right text-sm text-amber-800">
+            GitHub App installation is not configured. Set{" "}
+            <code className="rounded bg-amber-50 px-1">NEXT_PUBLIC_GITHUB_APP_SLUG</code> in `.env`
+            and rebuild the web service.
+          </p>
         )}
       </div>
 

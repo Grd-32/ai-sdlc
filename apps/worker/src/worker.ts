@@ -1,12 +1,25 @@
-import { Worker } from "bullmq";
+import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
-import { getRedisUrl, QUEUE_NAMES } from "./config.js";
+import { getRedisUrl, getRetentionPolicy, QUEUE_NAMES } from "./config.js";
 import { processJob } from "./processors/index.js";
+import { scheduleRetentionCleanup } from "./retention-scheduler.js";
 
 let worker: Worker | undefined;
 let connection: Redis | undefined;
 
-export function startWorker(): Worker {
+export async function startWorker(): Promise<Worker> {
+  const schedulerConnection = new Redis(getRedisUrl(), {
+    maxRetriesPerRequest: null,
+  });
+  const schedulerQueue = new Queue(QUEUE_NAMES.GITHUB, { connection: schedulerConnection });
+
+  try {
+    await scheduleRetentionCleanup(schedulerQueue, getRetentionPolicy());
+  } finally {
+    await schedulerQueue.close();
+    await schedulerConnection.quit();
+  }
+
   connection = new Redis(getRedisUrl(), {
     maxRetriesPerRequest: null,
   });

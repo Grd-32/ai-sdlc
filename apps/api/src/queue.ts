@@ -20,8 +20,8 @@ export function getGithubQueue(): Queue {
     githubQueue = new Queue(QUEUE_NAMES.GITHUB, {
       connection: getRedisConnection(),
       defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: "exponential", delay: 1000 },
+        attempts: 5,
+        backoff: { type: "exponential", delay: 2000 },
         removeOnComplete: { count: 1000 },
         removeOnFail: { count: 5000 },
       },
@@ -48,9 +48,7 @@ export async function enqueueGitHubWebhookEvent(payload: {
   organizationId?: string;
 }): Promise<string> {
   const queue = getGithubQueue();
-  const jobId = createHash("sha256")
-    .update(`${payload.eventType}:${payload.deliveryId}`)
-    .digest("hex");
+  const jobId = getGitHubWebhookEventJobId(payload.eventType, payload.deliveryId);
   const job = await queue.add(
     JOB_TYPES.GITHUB_WEBHOOK_EVENT,
     {
@@ -60,6 +58,10 @@ export async function enqueueGitHubWebhookEvent(payload: {
     { jobId },
   );
   return job.id ?? jobId;
+}
+
+export function getGitHubWebhookEventJobId(eventType: string, deliveryId: string): string {
+  return createHash("sha256").update(`${eventType}:${deliveryId}`).digest("hex");
 }
 
 /**

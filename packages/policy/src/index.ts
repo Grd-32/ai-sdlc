@@ -223,6 +223,7 @@
 import type { RepositoryCriticality, RiskLevel, SensitiveArea } from "@ai-sdlc/risk";
 
 export type PolicyAction = "ALLOW" | "REVIEW" | "BLOCK";
+export type PolicyMode = "ENFORCING" | "DRY_RUN" | "DISABLED";
 
 export interface MatchedPolicy {
   policyId: string;
@@ -241,6 +242,36 @@ export interface PolicyDecisionResult {
   matchedPolicies: MatchedPolicy[];
   requiredApprovals: ApprovalRequirement[];
   reasons: string[];
+}
+
+export interface PolicySimulationRecord extends PolicyEvaluationInput {
+  team?: string;
+  repository?: string;
+  pullRequestId?: string;
+}
+
+export interface PolicySimulatedDecision {
+  repository?: string;
+  team?: string;
+  pullRequestId?: string;
+  action: PolicyAction;
+  mode: PolicyMode;
+  riskScore: number;
+  riskLevel: RiskLevel;
+  reason: string;
+}
+
+export interface PolicySimulationResult {
+  mode: PolicyMode;
+  totalEvaluated: number;
+  allow: number;
+  review: number;
+  block: number;
+  falsePositiveEstimate: number;
+  affectedTeams: string[];
+  affectedRepositories: string[];
+  affectedPullRequests: string[];
+  decisions: PolicySimulatedDecision[];
 }
 
 export interface PolicyEvaluationInput {
@@ -342,6 +373,69 @@ export const POLICY_ACTION_PRECEDENCE: Record<PolicyAction, number> = {
   REVIEW: 2,
   ALLOW: 1,
 };
+
+export function resolvePolicyMode(action: PolicyAction, mode: PolicyMode): PolicyAction {
+  switch (mode) {
+    case "DISABLED":
+      return "ALLOW";
+    case "DRY_RUN":
+      return action === "BLOCK" ? "REVIEW" : action;
+    case "ENFORCING":
+    default:
+      return action;
+  }
+}
+
+export function simulatePolicyHistory(
+  history: PolicySimulationRecord[],
+  mode: PolicyMode = "DRY_RUN",
+): PolicySimulationResult {
+  const decisions = history.map((item) => {
+    const decision = evaluatePolicy(item);
+    const effectiveAction = resolvePolicyMode(decision.action, mode);
+
+    return {
+      repository: item.repository,
+      team: item.team,
+      pullRequestId: item.pullRequestId,
+      action: effectiveAction,
+      mode,
+      riskScore: item.riskScore,
+      riskLevel: item.riskLevel,
+      reason: decision.reasons.join("; ") || "No policy triggers", 
+    };
+  });
+
+  const allow = decisions.filter((decision) => decision.action === "ALLOW").length;
+  const review = decisions.filter((decision) => decision.action === "REVIEW").length;
+  const block = decisions.filter((decision) => decision.action === "BLOCK").length;
+
+  const affectedTeams = [...new Set(decisions.filter((x) => x.team).map((x) => x.team as string))];
+  const affectedRepositories = [
+    ...new Set(decisions.filter((x) => x.repository).map((x) => x.repository as string)),
+  ];
+  const affectedPullRequests = [
+    ...new Set(decisions.filter((x) => x.pullRequestId).map((x) => x.pullRequestId as string)),
+  ];
+
+  const falsePositiveEstimate = Math.max(
+    0,
+    Math.round((review + block) * 0.18),
+  );
+
+  return {
+    mode,
+    totalEvaluated: decisions.length,
+    allow,
+    review,
+    block,
+    falsePositiveEstimate,
+    affectedTeams,
+    affectedRepositories,
+    affectedPullRequests,
+    decisions,
+  };
+}
 
 function conditionMatches(input: PolicyEvaluationInput, condition: PolicyRuleCondition): boolean {
   if (condition.aiInvolved !== undefined) {

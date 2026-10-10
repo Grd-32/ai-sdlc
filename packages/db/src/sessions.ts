@@ -25,7 +25,9 @@ export interface CreateSessionParams {
   ttlSeconds?: number;
 }
 
-export async function createSession(params: CreateSessionParams): Promise<{ token: string; sessionId: string }> {
+export async function createSession(
+  params: CreateSessionParams,
+): Promise<{ token: string; sessionId: string }> {
   const token = generateSessionToken();
   const ttl = params.ttlSeconds ?? SESSION_TTL_SECONDS;
   const expiresAt = new Date(Date.now() + ttl * 1000);
@@ -49,7 +51,9 @@ export interface ValidSession {
 }
 
 /** Returns null if token is invalid, expired, or revoked. */
-export async function verifySessionToken(token: string | undefined | null): Promise<ValidSession | null> {
+export async function verifySessionToken(
+  token: string | undefined | null,
+): Promise<ValidSession | null> {
   if (!token || token.trim().length === 0) {
     return null;
   }
@@ -63,7 +67,7 @@ export async function verifySessionToken(token: string | undefined | null): Prom
     return null;
   }
 
-  if (session.expiresAt.getTime() < Date.now()) {
+  if (session.expiresAt.getTime() <= Date.now()) {
     return null;
   }
 

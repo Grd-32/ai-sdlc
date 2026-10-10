@@ -147,7 +147,6 @@
 // }
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getPublicApiUrl } from "@/lib/utils";
 import {
   getOrganizations,
   getSelectedOrganization,
@@ -189,13 +188,17 @@ export default async function SettingsPage() {
           <CardTitle className="text-base">Account</CardTitle>
         </CardHeader>
         <CardContent className="flex items-center justify-between">
-          <p className="text-sm text-slate-600">Signed in as {user?.name ?? user?.username ?? user?.email}</p>
-          <a
-            href={`${getPublicApiUrl()}/api/auth/logout`}
-            className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Sign out
-          </a>
+          <p className="text-sm text-slate-600">
+            Signed in as {user?.name ?? user?.username ?? user?.email}
+          </p>
+          <form action="/api/auth/logout" method="post">
+            <button
+              type="submit"
+              className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Sign out
+            </button>
+          </form>
         </CardContent>
       </Card>
 
@@ -225,14 +228,18 @@ export default async function SettingsPage() {
               <tbody>
                 {installations.map((inst) => (
                   <tr key={inst.id} className="border-b border-slate-100 last:border-0">
-                    <td className="px-4 py-3 font-medium text-slate-900">{inst.accountLogin ?? "—"}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      {inst.accountLogin ?? "—"}
+                    </td>
                     <td className="px-4 py-3 text-slate-600">{inst.accountType ?? "—"}</td>
                     <td className="px-4 py-3">
                       <Badge variant={inst.active ? "success" : "outline"}>
                         {inst.active ? "Active" : "Removed"}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3 text-slate-500">{new Date(inst.createdAt).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {new Date(inst.createdAt).toLocaleDateString()}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -281,7 +288,9 @@ export default async function SettingsPage() {
                   <tr key={event.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 font-medium text-slate-900">{event.eventType}</td>
                     <td className="px-4 py-3 text-slate-600">{event.actor ?? "System"}</td>
-                    <td className="px-4 py-3 text-slate-500">{new Date(event.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {new Date(event.createdAt).toLocaleString()}
+                    </td>
                   </tr>
                 ))}
               </tbody>

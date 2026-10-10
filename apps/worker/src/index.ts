@@ -1,6 +1,6 @@
 import { startWorker, stopWorker } from "./worker.js";
 
-startWorker();
+await startWorker();
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`Received ${signal}, shutting down worker...`);
