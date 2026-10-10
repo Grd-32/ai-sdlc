@@ -518,11 +518,14 @@ export interface PolicyRuleRecord {
   precedence: number;
 }
 
+export type PolicyMode = "ENFORCING" | "DRY_RUN" | "DISABLED";
+
 export interface PolicySummary {
   id: string;
   name: string;
   description: string | null;
   enabled: boolean;
+  mode: PolicyMode;
   version: string;
   policyRules: PolicyRuleRecord[];
 }

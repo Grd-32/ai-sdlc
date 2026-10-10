@@ -390,7 +390,12 @@
  */
 
 import type { Job } from "bullmq";
-import { prisma, recordAuditEvent } from "@ai-sdlc/db";
+import {
+  assertPullRequestOwnership,
+  prisma,
+  recordAuditEvent,
+  TenantIsolationError,
+} from "@ai-sdlc/db";
 import {
   classifyFilePaths,
   evaluateRisk,
