@@ -145,8 +145,8 @@ import {
   ShieldCheck,
   FileSearch,
   Settings,
+  Gauge,
 } from "lucide-react";
-import { getPublicApiUrl } from "@/lib/utils";
 import { getCurrentUser, getOrganizations, getSelectedOrganization } from "@/lib/api";
 
 const NAV_ITEMS = [
@@ -156,6 +156,7 @@ const NAV_ITEMS = [
   { label: "Repositories", href: "/dashboard/repositories", icon: FolderGit2, available: true },
   { label: "Policies", href: "/dashboard/policies", icon: ShieldCheck, available: true },
   { label: "Evidence", href: "/dashboard/evidence", icon: FileSearch, available: true },
+  { label: "Admin", href: "/dashboard/admin", icon: Gauge, available: true },
   { label: "Settings", href: "/dashboard/settings", icon: Settings, available: true },
 ] as const;
 
@@ -163,26 +164,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const user = await getCurrentUser();
 
   if (!user) {
-    redirect(`${getPublicApiUrl()}/api/auth/github/login?redirectTo=/dashboard`);
+    redirect("/api/auth/github/login?redirectTo=/dashboard");
   }
 
   const organizations = await getOrganizations();
 
   if (organizations.length === 0) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6">
-        <div className="max-w-md text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-white">
-            <Shield className="h-6 w-6" />
-          </div>
-          <h1 className="text-xl font-semibold text-slate-900">No organizations yet</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            {user.name ?? user.username ?? user.email} isn&apos;t a member of any organization in
-            AI-SDLC Control Plane yet. Ask an administrator to add you.
-          </p>
-        </div>
-      </main>
-    );
+    redirect("/onboarding");
   }
 
   const selectedOrg = await getSelectedOrganization(organizations);

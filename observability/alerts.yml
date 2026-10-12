@@ -1,0 +1,35 @@
+groups:
+  - name: api-sli-recording
+    interval: 1m
+    rules:
+      - record: api:sli_requests:increase30d
+        expr: sum(increase(api_sli_request_count_total{job="otel-collector"}[30d]))
+      - record: api:sli_errors:increase30d
+        expr: sum(increase(api_sli_request_count_total{job="otel-collector", http_response_status_code=~"5.."}[30d]))
+      - record: api:sli_availability:ratio30d
+        expr: 1 - (api:sli_errors:increase30d / clamp_min(api:sli_requests:increase30d, 1))
+
+  - name: api-availability
+    rules:
+      - alert: ApiAvailabilitySloBurn
+        expr: |
+          sum(rate(api_sli_request_count_total{job="otel-collector", http_response_status_code=~"5.."}[1h]))
+          / clamp_min(sum(rate(api_sli_request_count_total{job="otel-collector"}[1h])), 1) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          service: ai-sdlc-api
+        annotations:
+          summary: API is consuming its 99.9% availability error budget quickly
+          description: More than 1% of non-probe API requests returned 5xx responses over the last hour.
+      - alert: ApiHighServerErrorRate
+        expr: |
+          sum(rate(http_server_request_count_total{job="otel-collector", http_response_status_code=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_server_request_count_total{job="otel-collector"}[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: ai-sdlc-api
+        annotations:
+          summary: API server error rate is above 5%
+          description: More than 5% of API requests returned 5xx responses over the last five minutes.

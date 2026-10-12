@@ -622,7 +622,11 @@
 import { createHash } from "node:crypto";
 import { prisma, recordAuditEvent } from "@ai-sdlc/db";
 import { inferAIProvenanceFromPullRequest } from "@ai-sdlc/provenance";
-import { enqueueGitHubWebhookEvent, enqueuePullRequestAnalysis } from "./queue.js";
+import {
+  enqueueGitHubWebhookEvent,
+  enqueuePullRequestAnalysis,
+  getGitHubWebhookEventJobId,
+} from "./queue.js";
 
 type UpsertResult = {
   id: string;
@@ -783,24 +787,8 @@ type GitHubInstallationDelegate = {
 };
 
 type GitHubWebhookEventDelegate = {
-  upsert: (args: {
-    where: {
-      provider_deliveryId: {
-        provider: string;
-        deliveryId: string;
-      };
-    };
-    update: {
-      eventType: string;
-      payloadHash: string;
-      payload: unknown;
-      organizationId?: string | null;
-      installationId?: string | null;
-      repositoryId?: string | null;
-      status: string;
-      processedAt: null;
-    };
-    create: {
+  create: (args: {
+    data: {
       provider: string;
       eventType: string;
       deliveryId: string;
@@ -810,6 +798,28 @@ type GitHubWebhookEventDelegate = {
       installationId?: string | null;
       repositoryId?: string | null;
       status: string;
+    };
+  }) => Promise<{ id: string; status: string }>;
+  updateMany: (args: {
+    where: { id: string; status: string };
+    data: { status: string; processedAt: Date | null };
+  }) => Promise<{ count: number }>;
+  findUnique: (args: {
+    where: {
+      provider_deliveryId: {
+        provider: string;
+        deliveryId: string;
+      };
+    };
+  }) => Promise<{ id: string; status: string; eventType: string; payloadHash: string } | null>;
+  update: (args: {
+    where: { id: string };
+    data: {
+      organizationId?: string | null;
+      installationId?: string | null;
+      repositoryId?: string | null;
+      status?: string;
+      processedAt?: Date | null;
     };
   }) => Promise<{ id: string; status: string }>;
 };
@@ -832,7 +842,12 @@ const db = prisma as unknown as PrismaWebhookClient;
 // PR events that should trigger re-analysis. GitHub also sends `pull_request` for
 // actions like `labeled`, `assigned`, `closed`, etc. — re-running the full analysis
 // pipeline (and re-publishing a Check Run) for those would be wasted work and log noise.
-const ANALYZABLE_PULL_REQUEST_ACTIONS = new Set(["opened", "synchronize", "reopened", "ready_for_review"]);
+const ANALYZABLE_PULL_REQUEST_ACTIONS = new Set([
+  "opened",
+  "synchronize",
+  "reopened",
+  "ready_for_review",
+]);
 
 export interface GitHubWebhookEnvelope {
   eventType: string;
@@ -846,6 +861,22 @@ export interface GitHubWebhookEnvelope {
   // table.
   repositoryId?: string;
   organizationId?: string;
+}
+
+export class GitHubWebhookDeliveryConflictError extends Error {
+  constructor(deliveryId: string) {
+    super(`GitHub webhook delivery ${deliveryId} was already received with a different payload`);
+    this.name = "GitHubWebhookDeliveryConflictError";
+  }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
 }
 
 export function parseGitHubWebhookEnvelope(
@@ -866,8 +897,10 @@ export function parseGitHubWebhookEnvelope(
     parsedPayload = { raw: payload };
   }
 
-  const installationCandidate = (parsedPayload as { installation?: { id?: string | number } }).installation;
-  const repositoryCandidate = (parsedPayload as { repository?: { id?: string | number } }).repository;
+  const installationCandidate = (parsedPayload as { installation?: { id?: string | number } })
+    .installation;
+  const repositoryCandidate = (parsedPayload as { repository?: { id?: string | number } })
+    .repository;
 
   const installationId =
     installationCandidate &&
@@ -1166,120 +1199,189 @@ async function handleInstallationDeleted(githubInstallationId: string): Promise<
 export async function ingestGitHubWebhookDelivery(
   payload: string,
   headers: Record<string, string | undefined>,
-): Promise<{ eventId: string; jobId: string; status: string }> {
+): Promise<{ eventId: string; jobId: string; status: string; duplicate: boolean }> {
   const envelope = parseGitHubWebhookEnvelope(payload, headers);
   const jsonPayload = envelope.payload;
 
-  if (envelope.eventType === "installation") {
-    const installationPayload = envelope.payload as { action?: string };
-    if (installationPayload.action === "deleted" && envelope.installationId) {
-      await handleInstallationDeleted(envelope.installationId);
-    }
-  }
-
-  const installation = envelope.installationId
-    ? await db.gitHubInstallation.findFirst({
-        where: {
-          githubInstallationId: envelope.installationId,
-        },
-        select: {
-          id: true,
-          organizationId: true,
-        },
-      })
-    : null;
-
-  const organizationId = installation?.organizationId ?? undefined;
-
-  // Only ever set this to a Repository.id we've actually resolved internally
-  // (via persistGitHubPullRequestEvent below) — never to envelope.repositoryId,
-  // which is GitHub's own external repo ID and lives in a different ID space
-  // than our cuid primary keys.
-  let internalRepositoryId: string | undefined;
-
-  if (envelope.eventType === "pull_request" && organizationId && installation) {
-    const eventPayload = envelope.payload as {
-      action?: string;
-      repository?: {
-        id?: string | number;
-        name?: string;
-        full_name?: string;
-        owner?: { login?: string } | null;
-        default_branch?: string | null;
-        private?: boolean;
-      };
-      pull_request?: {
-        id?: string | number;
-        number?: number;
-        title?: string;
-        state?: string;
-        user?: { login?: string } | null;
-        head?: { ref?: string | null; sha?: string | null } | null;
-        base?: { ref?: string | null } | null;
-        created_at?: string | null;
-        updated_at?: string | null;
-        merged_at?: string | null;
-        additions?: number;
-        deletions?: number;
-        changed_files?: number;
-      };
-    };
-
-    const persistResult = await persistGitHubPullRequestEvent(organizationId, installation.id, eventPayload);
-    internalRepositoryId = persistResult.repositoryId;
-
-    if (ANALYZABLE_PULL_REQUEST_ACTIONS.has(eventPayload.action ?? "")) {
-      await enqueuePullRequestAnalysis({
-        organizationId,
-        repositoryId: persistResult.repositoryId,
-        pullRequestId: persistResult.pullRequestId,
-      });
-    }
-  }
-
-  const event = await db.gitHubWebhookEvent.upsert({
-    where: {
-      provider_deliveryId: {
+  let event: { id: string; status: string };
+  try {
+    event = await db.gitHubWebhookEvent.create({
+      data: {
         provider: "GITHUB",
+        eventType: envelope.eventType,
         deliveryId: envelope.deliveryId,
+        payloadHash: envelope.payloadHash,
+        payload: jsonPayload,
+        status: "RECEIVED",
       },
-    },
-    update: {
-      eventType: envelope.eventType,
-      payloadHash: envelope.payloadHash,
-      payload: jsonPayload,
-      organizationId,
-      installationId: installation?.id ?? undefined,
-      repositoryId: internalRepositoryId,
-      status: "RECEIVED",
-      processedAt: null,
-    },
-    create: {
-      provider: "GITHUB",
+    });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) {
+      throw error;
+    }
+
+    const existing = await db.gitHubWebhookEvent.findUnique({
+      where: {
+        provider_deliveryId: {
+          provider: "GITHUB",
+          deliveryId: envelope.deliveryId,
+        },
+      },
+    });
+    if (!existing) {
+      throw error;
+    }
+    if (
+      existing.eventType !== envelope.eventType ||
+      existing.payloadHash !== envelope.payloadHash
+    ) {
+      throw new GitHubWebhookDeliveryConflictError(envelope.deliveryId);
+    }
+
+    if (existing.status !== "FAILED") {
+      return {
+        eventId: existing.id,
+        jobId: getGitHubWebhookEventJobId(envelope.eventType, envelope.deliveryId),
+        status: existing.status,
+        duplicate: true,
+      };
+    }
+
+    const retryClaim = await db.gitHubWebhookEvent.updateMany({
+      where: { id: existing.id, status: "FAILED" },
+      data: { status: "RECEIVED", processedAt: null },
+    });
+    if (retryClaim.count === 0) {
+      const latest = await db.gitHubWebhookEvent.findUnique({
+        where: {
+          provider_deliveryId: {
+            provider: "GITHUB",
+            deliveryId: envelope.deliveryId,
+          },
+        },
+      });
+      if (!latest) {
+        throw new Error(`Webhook delivery ${envelope.deliveryId} disappeared during retry claim`);
+      }
+      return {
+        eventId: latest.id,
+        jobId: getGitHubWebhookEventJobId(envelope.eventType, envelope.deliveryId),
+        status: latest.status,
+        duplicate: true,
+      };
+    }
+    event = { id: existing.id, status: "RECEIVED" };
+  }
+
+  try {
+    if (envelope.eventType === "installation") {
+      const installationPayload = envelope.payload as { action?: string };
+      if (installationPayload.action === "deleted" && envelope.installationId) {
+        await handleInstallationDeleted(envelope.installationId);
+      }
+    }
+
+    const installation = envelope.installationId
+      ? await db.gitHubInstallation.findFirst({
+          where: {
+            githubInstallationId: envelope.installationId,
+          },
+          select: {
+            id: true,
+            organizationId: true,
+          },
+        })
+      : null;
+
+    const organizationId = installation?.organizationId ?? undefined;
+
+    // Only ever set this to a Repository.id we've actually resolved internally
+    // (via persistGitHubPullRequestEvent below) — never to envelope.repositoryId,
+    // which is GitHub's own external repo ID and lives in a different ID space
+    // than our cuid primary keys.
+    let internalRepositoryId: string | undefined;
+
+    if (envelope.eventType === "pull_request" && organizationId && installation) {
+      const eventPayload = envelope.payload as {
+        action?: string;
+        repository?: {
+          id?: string | number;
+          name?: string;
+          full_name?: string;
+          owner?: { login?: string } | null;
+          default_branch?: string | null;
+          private?: boolean;
+        };
+        pull_request?: {
+          id?: string | number;
+          number?: number;
+          title?: string;
+          state?: string;
+          user?: { login?: string } | null;
+          head?: { ref?: string | null; sha?: string | null } | null;
+          base?: { ref?: string | null } | null;
+          created_at?: string | null;
+          updated_at?: string | null;
+          merged_at?: string | null;
+          additions?: number;
+          deletions?: number;
+          changed_files?: number;
+        };
+      };
+
+      const persistResult = await persistGitHubPullRequestEvent(
+        organizationId,
+        installation.id,
+        eventPayload,
+      );
+      internalRepositoryId = persistResult.repositoryId;
+
+      if (ANALYZABLE_PULL_REQUEST_ACTIONS.has(eventPayload.action ?? "")) {
+        await enqueuePullRequestAnalysis({
+          organizationId,
+          repositoryId: persistResult.repositoryId,
+          pullRequestId: persistResult.pullRequestId,
+        });
+      }
+    }
+
+    await db.gitHubWebhookEvent.update({
+      where: { id: event.id },
+      data: {
+        organizationId,
+        installationId: installation?.id ?? undefined,
+        repositoryId: internalRepositoryId,
+      },
+    });
+
+    const jobId = await enqueueGitHubWebhookEvent({
       eventType: envelope.eventType,
       deliveryId: envelope.deliveryId,
       payloadHash: envelope.payloadHash,
-      payload: jsonPayload,
-      organizationId,
-      installationId: installation?.id ?? undefined,
+      payload: envelope.payload,
+      installationId: installation?.id ?? envelope.installationId,
       repositoryId: internalRepositoryId,
-      status: "RECEIVED",
-    },
-  });
+      organizationId,
+    });
 
-  const jobId = await enqueueGitHubWebhookEvent({
-    eventType: envelope.eventType,
-    deliveryId: envelope.deliveryId,
-    payloadHash: envelope.payloadHash,
-    payload: envelope.payload,
-    installationId: installation?.id ?? envelope.installationId,
-    repositoryId: internalRepositoryId,
-    organizationId,
-  });
-
-  return {
-    eventId: event.id,
-    jobId,
-    status: event.status,
-  };
+    return {
+      eventId: event.id,
+      jobId,
+      status: event.status,
+      duplicate: false,
+    };
+  } catch (error) {
+    try {
+      await db.gitHubWebhookEvent.update({
+        where: { id: event.id },
+        data: { status: "FAILED", processedAt: new Date() },
+      });
+    } catch (statusError) {
+      throw new AggregateError(
+        [error, statusError],
+        `Webhook delivery ${envelope.deliveryId} failed and its failure status could not be persisted`,
+      );
+    }
+    throw error;
+  }
 }

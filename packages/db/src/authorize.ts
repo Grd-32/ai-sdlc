@@ -44,6 +44,10 @@ export function roleAtLeast(role: OrganizationRole, minimum: OrganizationRole): 
   return ROLE_PRIORITY[normalizeRole(role)] >= ROLE_PRIORITY[normalizeRole(minimum)];
 }
 
+export function canManageRole(actorRole: OrganizationRole, targetRole: OrganizationRole): boolean {
+  return roleAtLeast(actorRole, targetRole);
+}
+
 type PermissionRule = {
   resource: ResourceType;
   action: AuthorizeAction;
@@ -102,7 +106,9 @@ export interface AuthorizeResult {
 }
 
 export function authorize(params: AuthorizeParams): AuthorizeResult {
-  const rule = PERMISSIONS.find((r) => r.resource === params.resource && r.action === params.action);
+  const rule = PERMISSIONS.find(
+    (r) => r.resource === params.resource && r.action === params.action,
+  );
   if (!rule) {
     return { allowed: false, reason: `No permission rule for ${params.resource}:${params.action}` };
   }

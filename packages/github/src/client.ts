@@ -255,20 +255,25 @@ export async function getInstallationAccessToken(githubInstallationId: string): 
 
   const config = getGitHubAppConfig();
   if (!config.appId || !config.privateKey) {
-    throw new Error("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY are required to mint installation tokens");
+    throw new Error(
+      "GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY are required to mint installation tokens",
+    );
   }
 
   const appJwt = signGitHubAppJwt(config.appId, config.privateKey);
   const baseUrl = config.baseUrl ?? "https://api.github.com";
 
-  const response = await fetch(`${baseUrl}/app/installations/${githubInstallationId}/access_tokens`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${appJwt}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
+  const response = await fetch(
+    `${baseUrl}/app/installations/${githubInstallationId}/access_tokens`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${appJwt}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
     },
-  });
+  );
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
@@ -311,7 +316,9 @@ export async function githubApiRequest<T>(
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    throw new Error(`GitHub API request failed (${response.status} ${init.method ?? "GET"} ${path}): ${body}`);
+    throw new Error(
+      `GitHub API request failed (${response.status} ${init.method ?? "GET"} ${path}): ${body}`,
+    );
   }
 
   if (response.status === 204) {
@@ -328,6 +335,39 @@ export interface GitHubPullRequestFile {
   deletions: number;
   changes: number;
   sha?: string;
+}
+
+export interface GitHubInstallationRepository {
+  id: number;
+  name: string;
+  full_name: string;
+  owner: { login: string } | null;
+  default_branch?: string | null;
+  private?: boolean;
+}
+
+/** List every repository currently available to an installation, with a bounded pagination loop. */
+export async function listInstallationRepositories(
+  githubInstallationId: string,
+): Promise<GitHubInstallationRepository[]> {
+  const repositories: GitHubInstallationRepository[] = [];
+  const perPage = 100;
+  const maxPages = 100;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const result = await githubApiRequest<{
+      repositories: GitHubInstallationRepository[];
+    }>(githubInstallationId, `/installation/repositories?per_page=${perPage}&page=${page}`);
+    repositories.push(...result.repositories);
+
+    if (result.repositories.length < perPage) {
+      return repositories;
+    }
+  }
+
+  throw new Error(
+    `GitHub installation ${githubInstallationId} has more than ${perPage * maxPages} repositories; refusing an incomplete sync`,
+  );
 }
 
 /** List changed files for a PR, paginated. Treat repository content/paths as untrusted input downstream. */
@@ -354,7 +394,10 @@ export async function listPullRequestFiles(
         changes: number;
         sha?: string;
       }>
-    >(githubInstallationId, `/repos/${owner}/${repo}/pulls/${pullNumber}/files?per_page=${perPage}&page=${page}`);
+    >(
+      githubInstallationId,
+      `/repos/${owner}/${repo}/pulls/${pullNumber}/files?per_page=${perPage}&page=${page}`,
+    );
 
     files.push(...pageFiles);
 
@@ -379,10 +422,14 @@ export interface GitHubInstallationDetails {
  * install) we don't necessarily have one cached yet, and this specific
  * endpoint is app-level, not installation-scoped, per GitHub's API.
  */
-export async function getInstallationDetails(githubInstallationId: string): Promise<GitHubInstallationDetails> {
+export async function getInstallationDetails(
+  githubInstallationId: string,
+): Promise<GitHubInstallationDetails> {
   const config = getGitHubAppConfig();
   if (!config.appId || !config.privateKey) {
-    throw new Error("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY are required to fetch installation details");
+    throw new Error(
+      "GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY are required to fetch installation details",
+    );
   }
 
   const appJwt = signGitHubAppJwt(config.appId, config.privateKey);

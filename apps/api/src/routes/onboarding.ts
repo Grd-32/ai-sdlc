@@ -6,7 +6,7 @@
 
 import type { Hono } from "hono";
 import { randomBytes } from "node:crypto";
-import { prisma, recordAuditEvent, type OrganizationRole } from "@ai-sdlc/db";
+import { canManageRole, prisma, recordAuditEvent, type OrganizationRole } from "@ai-sdlc/db";
 import { requireAuth, requireOrganizationRole } from "../middleware/auth.js";
 import type { AppEnv } from "../types.js";
 
@@ -52,7 +52,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
     const body = await c.req.json().catch(() => null);
     const name = typeof body?.name === "string" ? body.name.trim() : "";
     if (!name) {
-      return c.json({ data: null, error: { code: "VALIDATION_ERROR", message: "name is required" } }, 400);
+      return c.json(
+        { data: null, error: { code: "VALIDATION_ERROR", message: "name is required" } },
+        400,
+      );
     }
 
     const requestedSlug = typeof body?.slug === "string" ? slugify(body.slug) : slugify(name);
@@ -100,7 +103,9 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
 
       const members = await prisma.organizationMember.findMany({
         where: { organizationId, scimActive: true },
-        include: { user: { select: { id: true, email: true, name: true, username: true, avatarUrl: true } } },
+        include: {
+          user: { select: { id: true, email: true, name: true, username: true, avatarUrl: true } },
+        },
         orderBy: { createdAt: "asc" },
       });
 
@@ -133,15 +138,45 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       const roleInput = typeof body?.role === "string" ? body.role : "VIEWER";
       if (!email || !VALID_ROLES.has(roleInput as OrganizationRole)) {
         return c.json(
-          { data: null, error: { code: "VALIDATION_ERROR", message: "Valid email and role are required" } },
+          {
+            data: null,
+            error: { code: "VALIDATION_ERROR", message: "Valid email and role are required" },
+          },
           400,
         );
       }
       const role = roleInput as OrganizationRole;
+      const actorRole = c.get("organizationRole");
+      if (!canManageRole(actorRole, role)) {
+        return c.json(
+          {
+            data: null,
+            error: {
+              code: "FORBIDDEN",
+              message: "You cannot grant an organization role higher than your own",
+            },
+          },
+          403,
+        );
+      }
 
       const user =
         (await prisma.user.findUnique({ where: { email } })) ??
         (await prisma.user.create({ data: { email, name: email.split("@")[0] ?? email } }));
+
+      const existingMembership = await prisma.organizationMember.findUnique({
+        where: { organizationId_userId: { organizationId, userId: user.id } },
+        select: { role: true },
+      });
+      if (existingMembership && !canManageRole(actorRole, existingMembership.role)) {
+        return c.json(
+          {
+            data: null,
+            error: { code: "FORBIDDEN", message: "You cannot manage a member with a higher role" },
+          },
+          403,
+        );
+      }
 
       const member = await prisma.organizationMember.upsert({
         where: { organizationId_userId: { organizationId, userId: user.id } },
@@ -171,9 +206,25 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       const memberId = c.req.param("memberId");
       const body = await c.req.json().catch(() => null);
 
-      const existing = await prisma.organizationMember.findFirst({ where: { id: memberId, organizationId } });
+      const existing = await prisma.organizationMember.findFirst({
+        where: { id: memberId, organizationId },
+      });
       if (!existing) {
-        return c.json({ data: null, error: { code: "NOT_FOUND", message: "Member not found" } }, 404);
+        return c.json(
+          { data: null, error: { code: "NOT_FOUND", message: "Member not found" } },
+          404,
+        );
+      }
+
+      const actorRole = c.get("organizationRole");
+      if (!canManageRole(actorRole, existing.role)) {
+        return c.json(
+          {
+            data: null,
+            error: { code: "FORBIDDEN", message: "You cannot manage a member with a higher role" },
+          },
+          403,
+        );
       }
 
       if (existing.role === "OWNER" && body?.role && body.role !== "OWNER") {
@@ -182,7 +233,13 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
         });
         if (ownerCount <= 1) {
           return c.json(
-            { data: null, error: { code: "VALIDATION_ERROR", message: "Organization must retain at least one owner" } },
+            {
+              data: null,
+              error: {
+                code: "VALIDATION_ERROR",
+                message: "Organization must retain at least one owner",
+              },
+            },
             400,
           );
         }
@@ -190,7 +247,22 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
 
       const roleInput = typeof body?.role === "string" ? body.role : existing.role;
       if (!VALID_ROLES.has(roleInput as OrganizationRole)) {
-        return c.json({ data: null, error: { code: "VALIDATION_ERROR", message: "Invalid role" } }, 400);
+        return c.json(
+          { data: null, error: { code: "VALIDATION_ERROR", message: "Invalid role" } },
+          400,
+        );
+      }
+      if (!canManageRole(actorRole, roleInput as OrganizationRole)) {
+        return c.json(
+          {
+            data: null,
+            error: {
+              code: "FORBIDDEN",
+              message: "You cannot grant an organization role higher than your own",
+            },
+          },
+          403,
+        );
       }
 
       const member = await prisma.organizationMember.update({
@@ -219,9 +291,24 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       const actorId = c.get("userId");
       const memberId = c.req.param("memberId");
 
-      const existing = await prisma.organizationMember.findFirst({ where: { id: memberId, organizationId } });
+      const existing = await prisma.organizationMember.findFirst({
+        where: { id: memberId, organizationId },
+      });
       if (!existing) {
-        return c.json({ data: null, error: { code: "NOT_FOUND", message: "Member not found" } }, 404);
+        return c.json(
+          { data: null, error: { code: "NOT_FOUND", message: "Member not found" } },
+          404,
+        );
+      }
+
+      if (!canManageRole(c.get("organizationRole"), existing.role)) {
+        return c.json(
+          {
+            data: null,
+            error: { code: "FORBIDDEN", message: "You cannot remove a member with a higher role" },
+          },
+          403,
+        );
       }
 
       if (existing.role === "OWNER") {
@@ -230,7 +317,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
         });
         if (ownerCount <= 1) {
           return c.json(
-            { data: null, error: { code: "VALIDATION_ERROR", message: "Cannot remove the last owner" } },
+            {
+              data: null,
+              error: { code: "VALIDATION_ERROR", message: "Cannot remove the last owner" },
+            },
             400,
           );
         }
@@ -263,7 +353,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       const body = await c.req.json().catch(() => null);
       const domain = typeof body?.domain === "string" ? body.domain.trim().toLowerCase() : "";
       if (!domain || domain.includes("@") || domain.includes(" ")) {
-        return c.json({ data: null, error: { code: "VALIDATION_ERROR", message: "Valid domain is required" } }, 400);
+        return c.json(
+          { data: null, error: { code: "VALIDATION_ERROR", message: "Valid domain is required" } },
+          400,
+        );
       }
 
       const verificationToken = randomBytes(16).toString("hex");

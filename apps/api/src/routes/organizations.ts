@@ -13,8 +13,9 @@
  */
 
 import type { Hono } from "hono";
-import { prisma } from "@ai-sdlc/db";
+import { prisma, recordAuditEvent } from "@ai-sdlc/db";
 import { requireAuth, requireOrganizationRole } from "../middleware/auth.js";
+import { redactSensitiveFields } from "../security/redaction.js";
 import type { AppEnv } from "../types.js";
 
 export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
@@ -41,6 +42,86 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
       error: null,
     });
   });
+
+  app.get(
+    "/api/organizations/:organizationId/export",
+    requireAuth,
+    requireOrganizationRole("ADMIN"),
+    async (c) => {
+      const organizationId = c.get("organizationId");
+      const organization = await prisma.organization.findUnique({
+        where: { id: organizationId },
+        include: {
+          members: {
+            select: {
+              id: true,
+              userId: true,
+              role: true,
+              externalId: true,
+              scimActive: true,
+              createdAt: true,
+              user: { select: { id: true, email: true, name: true, username: true, active: true } },
+            },
+          },
+          installations: true,
+          repositories: true,
+          pullRequests: true,
+          commits: true,
+          aiActivities: true,
+          codeChanges: true,
+          findings: true,
+          riskAssessments: true,
+          policies: { include: { policyRules: true } },
+          policyRules: true,
+          policyDecisions: true,
+          reviews: true,
+          evidence: true,
+          passports: true,
+          auditEvents: true,
+          webhookEvents: true,
+          domains: true,
+          environments: true,
+          identityProviders: true,
+          scimTokens: true,
+          serviceAccounts: true,
+          apiKeys: true,
+          aiProviders: true,
+          aiAgents: true,
+          aiModels: true,
+          sbomComponents: true,
+          riskAcceptances: true,
+          observabilityEvents: true,
+        },
+      });
+
+      if (!organization) {
+        return c.json(
+          { data: null, error: { code: "NOT_FOUND", message: "Organization not found" } },
+          404,
+        );
+      }
+
+      await recordAuditEvent({
+        organizationId,
+        actorId: c.get("userId"),
+        eventType: "ORGANIZATION_DATA_EXPORTED",
+        metadata: { exportFormatVersion: 1 },
+      });
+
+      c.header(
+        "Content-Disposition",
+        `attachment; filename="organization-${encodeURIComponent(organizationId)}-export.json"`,
+      );
+      return c.json({
+        data: {
+          exportFormatVersion: 1,
+          exportedAt: new Date().toISOString(),
+          organization: redactSensitiveFields(organization),
+        },
+        error: null,
+      });
+    },
+  );
 
   /** README §43 — overview metrics. */
   app.get(
@@ -113,7 +194,11 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
             take: 1,
             select: { agent: true, involvement: true, confidence: true },
           },
-          riskAssessments: { orderBy: { createdAt: "desc" }, take: 1, select: { level: true, score: true } },
+          riskAssessments: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { level: true, score: true },
+          },
           policyDecisions: { orderBy: { createdAt: "desc" }, take: 1, select: { action: true } },
         },
       });
@@ -165,7 +250,10 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
       });
 
       if (!pullRequest) {
-        return c.json({ data: null, error: { code: "NOT_FOUND", message: "Pull request not found" } }, 404);
+        return c.json(
+          { data: null, error: { code: "NOT_FOUND", message: "Pull request not found" } },
+          404,
+        );
       }
 
       return c.json({ data: pullRequest, error: null });

@@ -35,10 +35,12 @@ services:
       - .env
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgresql://ai_sdlc:ai_sdlc_dev@postgres:5432/ai_sdlc?schema=public
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql://ai_sdlc:ai_sdlc_dev@postgres:5432/ai_sdlc?schema=public}
       REDIS_URL: redis://redis:6379
       API_PORT: 3001
-      APP_URL: http://localhost:3000
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: ai-sdlc-api
     ports:
       - "3001:3001"
     depends_on:
@@ -46,6 +48,29 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - prometheus
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=45d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
 
   worker:
     build:
@@ -55,7 +80,7 @@ services:
       - .env
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgresql://ai_sdlc:ai_sdlc_dev@postgres:5432/ai_sdlc?schema=public
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql://ai_sdlc:ai_sdlc_dev@postgres:5432/ai_sdlc?schema=public}
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
@@ -63,22 +88,39 @@ services:
       redis:
         condition: service_healthy
 
-
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+        NEXT_PUBLIC_GITHUB_APP_SLUG: ${NEXT_PUBLIC_GITHUB_APP_SLUG:-}
     env_file:
       - .env
     environment:
       NODE_ENV: development
-      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
       API_INTERNAL_URL: http://api:3001
     ports:
       - "3000:3000"
     depends_on:
       - api
 
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:

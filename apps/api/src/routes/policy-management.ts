@@ -265,11 +265,12 @@
  */
 
 import type { Hono } from "hono";
-import { prisma, recordAuditEvent } from "@ai-sdlc/db";
+import { normalizePolicyMode, prisma, recordAuditEvent } from "@ai-sdlc/db";
 import { requireAuth, requireOrganizationRole } from "../middleware/auth.js";
 import type { AppEnv } from "../types.js";
 
 const VALID_ACTIONS = new Set(["ALLOW", "REVIEW", "BLOCK"]);
+const VALID_MODES = new Set(["ENFORCING", "DRY_RUN", "DISABLED"]);
 
 const VALID_SENSITIVE_AREAS = new Set([
   "AUTHENTICATION",
@@ -316,10 +317,23 @@ export function registerPolicyManagementRoutes(app: Hono<AppEnv>): void {
       if (!name) {
         return c.json({ data: null, error: { code: "VALIDATION_ERROR", message: "name is required" } }, 400);
       }
+      const rawMode = typeof body?.mode === "string" ? body.mode.toUpperCase() : "DRY_RUN";
+      if (!VALID_MODES.has(rawMode)) {
+        return c.json(
+          { data: null, error: { code: "VALIDATION_ERROR", message: "mode must be ENFORCING, DRY_RUN, or DISABLED" } },
+          400,
+        );
+      }
       const description = typeof body?.description === "string" ? body.description.trim() || null : null;
 
       const policy = await prisma.policy.create({
-        data: { organizationId, name, description, enabled: true },
+        data: {
+          organizationId,
+          name,
+          description,
+          enabled: body?.enabled === false ? false : true,
+          mode: normalizePolicyMode(rawMode),
+        },
       });
 
       await recordAuditEvent({
@@ -351,10 +365,20 @@ export function registerPolicyManagementRoutes(app: Hono<AppEnv>): void {
         return c.json({ data: null, error: { code: "NOT_FOUND", message: "Policy not found" } }, 404);
       }
 
-      const data: { name?: string; description?: string | null; enabled?: boolean } = {};
+      const data: { name?: string; description?: string | null; enabled?: boolean; mode?: "ENFORCING" | "DRY_RUN" | "DISABLED" } = {};
       if (typeof body?.name === "string" && body.name.trim()) data.name = body.name.trim();
       if (typeof body?.description === "string") data.description = body.description.trim() || null;
       if (typeof body?.enabled === "boolean") data.enabled = body.enabled;
+      if (typeof body?.mode === "string") {
+        const nextMode = body.mode.toUpperCase();
+        if (!VALID_MODES.has(nextMode)) {
+          return c.json(
+            { data: null, error: { code: "VALIDATION_ERROR", message: "mode must be ENFORCING, DRY_RUN, or DISABLED" } },
+            400,
+          );
+        }
+        data.mode = normalizePolicyMode(nextMode);
+      }
 
       const policy = await prisma.policy.update({ where: { id: policyId }, data });
 

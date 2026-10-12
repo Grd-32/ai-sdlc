@@ -5,9 +5,8 @@
  * and basic group membership mapping to application roles.
  */
 
-import type { Context, Next } from "hono";
+import { Hono, type Context, type Next } from "hono";
 import { createHash, randomBytes } from "node:crypto";
-import type { Hono } from "hono";
 import { prisma, recordAuditEvent, type OrganizationRole } from "@ai-sdlc/db";
 import { requireAuth, requireOrganizationRole } from "../middleware/auth.js";
 import type { AppEnv } from "../types.js";
@@ -41,9 +40,13 @@ async function requireScimAuth(c: Context<ScimEnv>, next: Next): Promise<Respons
   const match = /^Bearer\s+(.+)$/i.exec(authHeader);
   const token = match?.[1]?.trim();
   if (!token) {
-    return c.json({ schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"], detail: "Unauthorized" }, 401, {
-      "Content-Type": SCIM_CONTENT_TYPE,
-    });
+    return c.json(
+      { schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"], detail: "Unauthorized" },
+      401,
+      {
+        "Content-Type": SCIM_CONTENT_TYPE,
+      },
+    );
   }
 
   const tokenRecord = await prisma.scimBearerToken.findUnique({
@@ -52,9 +55,13 @@ async function requireScimAuth(c: Context<ScimEnv>, next: Next): Promise<Respons
   });
 
   if (!tokenRecord || tokenRecord.revokedAt) {
-    return c.json({ schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"], detail: "Unauthorized" }, 401, {
-      "Content-Type": SCIM_CONTENT_TYPE,
-    });
+    return c.json(
+      { schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"], detail: "Unauthorized" },
+      401,
+      {
+        "Content-Type": SCIM_CONTENT_TYPE,
+      },
+    );
   }
 
   c.set("scimOrganizationId", tokenRecord.organizationId);
@@ -164,12 +171,15 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
     const organizationId = c.get("scimOrganizationId");
     const body = await c.req.json().catch(() => null);
     const email = (body?.userName ?? body?.emails?.[0]?.value ?? "").toLowerCase().trim();
-    const externalId = typeof body?.externalId === "string" ? body.externalId : randomBytes(8).toString("hex");
+    const externalId =
+      typeof body?.externalId === "string" ? body.externalId : randomBytes(8).toString("hex");
     const active = body?.active !== false;
     const displayName = body?.name?.formatted ?? body?.displayName ?? email.split("@")[0];
 
     if (!email) {
-      return c.json({ detail: "userName or email is required" }, 400, { "Content-Type": SCIM_CONTENT_TYPE });
+      return c.json({ detail: "userName or email is required" }, 400, {
+        "Content-Type": SCIM_CONTENT_TYPE,
+      });
     }
 
     const role = mapRoleFromGroups(body?.groups);
@@ -178,6 +188,8 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
       (await prisma.user.findUnique({ where: { email } })) ??
       (await prisma.user.create({ data: { email, name: displayName, externalId } }));
 
+    // SCIM activity is organization membership state; User.active is an
+    // account-wide authentication control and must not be changed here.
     const member = await prisma.organizationMember.upsert({
       where: { organizationId_userId: { organizationId, userId: user.id } },
       update: { externalId, scimActive: active, role: active ? role : "VIEWER" },
@@ -190,7 +202,6 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
         where: { id: member.id },
         data: { scimActive: false },
       });
-      await prisma.user.update({ where: { id: user.id }, data: { active: false } });
     }
 
     await recordAuditEvent({
@@ -228,8 +239,6 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
       include: { user: { select: { email: true, name: true } } },
     });
 
-    await prisma.user.update({ where: { id: member.userId }, data: { active } });
-
     await recordAuditEvent({
       organizationId,
       eventType: active ? "SCIM_USER_REACTIVATED" : "SCIM_USER_DEACTIVATED",
@@ -243,13 +252,17 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
     const organizationId = c.get("scimOrganizationId");
     const externalId = c.req.param("id");
 
-    const member = await prisma.organizationMember.findFirst({ where: { organizationId, externalId } });
+    const member = await prisma.organizationMember.findFirst({
+      where: { organizationId, externalId },
+    });
     if (!member) {
       return c.json({ detail: "User not found" }, 404, { "Content-Type": SCIM_CONTENT_TYPE });
     }
 
-    await prisma.organizationMember.update({ where: { id: member.id }, data: { scimActive: false } });
-    await prisma.user.update({ where: { id: member.userId }, data: { active: false } });
+    await prisma.organizationMember.update({
+      where: { id: member.id },
+      data: { scimActive: false },
+    });
 
     await recordAuditEvent({
       organizationId,

@@ -42,6 +42,20 @@ enum AIInvolvement {
   UNKNOWN
 }
 
+enum AIApprovalStatus {
+  APPROVED
+  REVIEW
+  BLOCKED
+  UNREVIEWED
+}
+
+enum SBOMComponentStatus {
+  ACTIVE
+  REVIEW
+  BLOCKED
+  ACCEPTED
+}
+
 enum ProvenanceSource {
   DEVELOPER_DECLARED
   AGENT_TELEMETRY
@@ -65,6 +79,12 @@ enum PolicyAction {
   BLOCK
 }
 
+enum PolicyMode {
+  ENFORCING
+  DRY_RUN
+  DISABLED
+}
+
 enum EvidenceStatus {
   PASS
   FAIL
@@ -84,6 +104,7 @@ model Organization {
   name        String
   slug        String              @unique
   ssoEnforced Boolean             @default(false)
+  webhookRetentionDays Int?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   members     OrganizationMember[]
@@ -107,6 +128,14 @@ model Organization {
   environments OrganizationEnvironmentConfig[]
   identityProviders IdentityProvider[]
   scimTokens  ScimBearerToken[]
+  serviceAccounts ServiceAccount[]
+  apiKeys     ApiKey[]
+  aiProviders AIProvider[]
+  aiAgents    AIAgent[]
+  aiModels    AIModel[]
+  sbomComponents SBOMComponent[]
+  riskAcceptances RiskAcceptance[]
+  observabilityEvents ObservabilityEvent[]
 }
 
 model User {
@@ -142,6 +171,42 @@ model OrganizationMember {
   @@unique([organizationId, userId])
   @@unique([organizationId, externalId])
   @@index([organizationId, userId])
+}
+
+model ServiceAccount {
+  id          String    @id @default(cuid())
+  organizationId String
+  name        String
+  description String?
+  role        OrganizationRole @default(VIEWER)
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKeys     ApiKey[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, active])
+}
+
+model ApiKey {
+  id             String    @id @default(cuid())
+  organizationId String
+  serviceAccountId String?
+  name           String
+  keyHash        String    @unique
+  revokedAt      DateTime?
+  expiresAt      DateTime?
+  lastUsedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  serviceAccount ServiceAccount? @relation(fields: [serviceAccountId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, serviceAccountId])
+  @@index([organizationId, revokedAt, expiresAt])
 }
 
 model GitHubInstallation {
@@ -269,6 +334,62 @@ model Commit {
   @@index([organizationId, committedAt])
 }
 
+model AIProvider {
+  id             String            @id @default(cuid())
+  organizationId String
+  name           String
+  status         AIApprovalStatus  @default(UNREVIEWED)
+  website        String?
+  description    String?
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agents         AIAgent[]
+  models         AIModel[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+}
+
+model AIAgent {
+  id             String            @id @default(cuid())
+  organizationId String
+  providerId     String
+  name           String
+  status         AIApprovalStatus  @default(UNREVIEWED)
+  description    String?
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider       AIProvider        @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, providerId, name])
+  @@index([organizationId, status])
+}
+
+model AIModel {
+  id             String            @id @default(cuid())
+  organizationId String
+  providerId     String
+  name           String
+  version        String?
+  status         AIApprovalStatus  @default(UNREVIEWED)
+  description    String?
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider       AIProvider        @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, providerId, name])
+  @@index([organizationId, status])
+}
+
 model AIActivity {
   id             String            @id @default(cuid())
   organizationId String
@@ -326,8 +447,47 @@ model SecurityFinding {
   organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   repository         Repository?  @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
   pullRequest        PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  riskAcceptances    RiskAcceptance[]
 
   @@index([organizationId, severity])
+}
+
+model SBOMComponent {
+  id             String             @id @default(cuid())
+  organizationId String
+  name           String
+  version        String?
+  ecosystem      String             @default("NPM")
+  status         SBOMComponentStatus @default(ACTIVE)
+  source         String?
+  metadata       Json?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  riskAcceptances RiskAcceptance[]
+
+  @@unique([organizationId, ecosystem, name, version])
+  @@index([organizationId, status])
+}
+
+model RiskAcceptance {
+  id             String      @id @default(cuid())
+  organizationId String
+  findingId      String?
+  componentId    String?
+  acceptedBy     String?
+  reason         String?
+  status         String      @default("ACCEPTED")
+  expiresAt      DateTime?
+  approvedAt     DateTime?   @default(now())
+  createdAt      DateTime    @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  finding        SecurityFinding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  component      SBOMComponent? @relation(fields: [componentId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
 }
 
 model RiskAssessment {
@@ -353,6 +513,7 @@ model Policy {
   name           String
   description    String?
   enabled        Boolean      @default(true)
+  mode           PolicyMode   @default(DRY_RUN)
   version        String       @default("v1")
   metadata       Json?
   createdAt      DateTime     @default(now())
@@ -363,6 +524,7 @@ model Policy {
   decisions      PolicyDecision[]
 
   @@index([organizationId, enabled])
+  @@index([organizationId, mode])
 }
 
 model PolicyRule {
@@ -469,6 +631,24 @@ model AuditEvent {
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   actor          User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
   @@index([organizationId, eventType, createdAt])
+}
+
+model ObservabilityEvent {
+  id             String       @id @default(cuid())
+  organizationId String?
+  service        String?
+  level          String       @default("INFO")
+  message        String
+  requestId      String?
+  correlationId  String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([requestId])
+  @@index([correlationId])
 }
 
 model SystemHealth {

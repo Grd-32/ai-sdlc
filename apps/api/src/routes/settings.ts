@@ -10,11 +10,77 @@
  */
 
 import type { Hono } from "hono";
-import { prisma } from "@ai-sdlc/db";
+import { prisma, recordAuditEvent } from "@ai-sdlc/db";
 import { requireAuth, requireOrganizationRole } from "../middleware/auth.js";
 import type { AppEnv } from "../types.js";
 
 export function registerSettingsRoutes(app: Hono<AppEnv>): void {
+  app.get(
+    "/api/organizations/:organizationId/settings/retention",
+    requireAuth,
+    requireOrganizationRole("ADMIN"),
+    async (c) => {
+      const organization = await prisma.organization.findUnique({
+        where: { id: c.get("organizationId") },
+        select: { webhookRetentionDays: true },
+      });
+
+      if (!organization) {
+        return c.json({ data: null, error: { code: "NOT_FOUND", message: "Organization not found" } }, 404);
+      }
+
+      return c.json({ data: organization, error: null });
+    },
+  );
+
+  app.patch(
+    "/api/organizations/:organizationId/settings/retention",
+    requireAuth,
+    requireOrganizationRole("ADMIN"),
+    async (c) => {
+      const body: unknown = await c.req.json().catch(() => null);
+      if (!body || typeof body !== "object" || !("webhookRetentionDays" in body)) {
+        return c.json(
+          { data: null, error: { code: "INVALID_RETENTION_POLICY", message: "webhookRetentionDays is required" } },
+          400,
+        );
+      }
+
+      const webhookRetentionDays = body.webhookRetentionDays;
+      if (
+        webhookRetentionDays !== null &&
+        (typeof webhookRetentionDays !== "number" || !Number.isInteger(webhookRetentionDays) || webhookRetentionDays < 1 || webhookRetentionDays > 3650)
+      ) {
+        return c.json(
+          {
+            data: null,
+            error: {
+              code: "INVALID_RETENTION_POLICY",
+              message: "webhookRetentionDays must be null or an integer between 1 and 3650",
+            },
+          },
+          400,
+        );
+      }
+
+      const organizationId = c.get("organizationId");
+      const organization = await prisma.organization.update({
+        where: { id: organizationId },
+        data: { webhookRetentionDays },
+        select: { webhookRetentionDays: true },
+      });
+
+      await recordAuditEvent({
+        organizationId,
+        actorId: c.get("userId"),
+        eventType: "ORGANIZATION_RETENTION_UPDATED",
+        metadata: { webhookRetentionDays },
+      });
+
+      return c.json({ data: organization, error: null });
+    },
+  );
+
   app.get(
     "/api/organizations/:organizationId/installations",
     requireAuth,

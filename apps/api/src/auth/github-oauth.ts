@@ -266,7 +266,9 @@ import type { AppEnv } from "../types.js";
 const OAUTH_STATE_COOKIE = "ai_sdlc_oauth_state";
 const OAUTH_REDIRECT_COOKIE = "ai_sdlc_oauth_redirect";
 const DEFAULT_REDIRECT_PATH = "/dashboard";
-const isProduction = process.env["NODE_ENV"] === "production";
+const useSecureCookies =
+  process.env["NODE_ENV"] === "production" ||
+  process.env["APP_URL"]?.startsWith("https://") === true;
 
 function getOAuthRuntimeConfig() {
   const { clientId, clientSecret } = getGitHubAppConfig();
@@ -305,7 +307,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
     setCookie(c, OAUTH_STATE_COOKIE, state, {
       httpOnly: true,
-      secure: isProduction,
+      secure: useSecureCookies,
       sameSite: "Lax",
       maxAge: 600,
       path: "/",
@@ -313,7 +315,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
     setCookie(c, OAUTH_REDIRECT_COOKIE, redirectTo, {
       httpOnly: true,
-      secure: isProduction,
+      secure: useSecureCookies,
       sameSite: "Lax",
       maxAge: 600,
       path: "/",
@@ -342,7 +344,10 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
     if (!code || !state || !expectedState || state !== expectedState) {
       return c.json(
-        { data: null, error: { code: "OAUTH_STATE_MISMATCH", message: "Invalid or expired OAuth state" } },
+        {
+          data: null,
+          error: { code: "OAUTH_STATE_MISMATCH", message: "Invalid or expired OAuth state" },
+        },
         400,
       );
     }
@@ -360,7 +365,10 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
     if (!tokenResponse || !tokenResponse.ok) {
       return c.json(
-        { data: null, error: { code: "OAUTH_TOKEN_REQUEST_FAILED", message: "GitHub token exchange failed" } },
+        {
+          data: null,
+          error: { code: "OAUTH_TOKEN_REQUEST_FAILED", message: "GitHub token exchange failed" },
+        },
         502,
       );
     }
@@ -370,7 +378,10 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       return c.json(
         {
           data: null,
-          error: { code: "OAUTH_TOKEN_REQUEST_FAILED", message: tokenData.error ?? "No access token returned" },
+          error: {
+            code: "OAUTH_TOKEN_REQUEST_FAILED",
+            message: tokenData.error ?? "No access token returned",
+          },
         },
         400,
       );
@@ -388,7 +399,10 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
     if (!userResponse.ok) {
       return c.json(
-        { data: null, error: { code: "OAUTH_PROFILE_FETCH_FAILED", message: "Failed to fetch GitHub profile" } },
+        {
+          data: null,
+          error: { code: "OAUTH_PROFILE_FETCH_FAILED", message: "Failed to fetch GitHub profile" },
+        },
         502,
       );
     }
@@ -403,8 +417,15 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
     let primaryEmail = githubUser.email ?? null;
     if (!primaryEmail && emailsResponse.ok) {
-      const emails = (await emailsResponse.json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
-      primaryEmail = emails.find((e) => e.primary && e.verified)?.email ?? emails.find((e) => e.verified)?.email ?? null;
+      const emails = (await emailsResponse.json()) as Array<{
+        email: string;
+        primary: boolean;
+        verified: boolean;
+      }>;
+      primaryEmail =
+        emails.find((e) => e.primary && e.verified)?.email ??
+        emails.find((e) => e.verified)?.email ??
+        null;
     }
 
     if (!primaryEmail) {
@@ -446,7 +467,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
     setCookie(c, SESSION_COOKIE, sessionToken, {
       httpOnly: true,
-      secure: isProduction,
+      secure: useSecureCookies,
       sameSite: "Lax",
       maxAge: SESSION_TTL_SECONDS,
       path: "/",
@@ -481,7 +502,10 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
   app.get("/api/auth/me", async (c) => {
     const session = await verifySessionCookieValue(getCookie(c, SESSION_COOKIE));
     if (!session) {
-      return c.json({ data: null, error: { code: "UNAUTHENTICATED", message: "Not signed in" } }, 401);
+      return c.json(
+        { data: null, error: { code: "UNAUTHENTICATED", message: "Not signed in" } },
+        401,
+      );
     }
 
     const user = await prisma.user.findUnique({
@@ -490,7 +514,13 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     });
 
     if (!user) {
-      return c.json({ data: null, error: { code: "UNAUTHENTICATED", message: "Session user no longer exists" } }, 401);
+      return c.json(
+        {
+          data: null,
+          error: { code: "UNAUTHENTICATED", message: "Session user no longer exists" },
+        },
+        401,
+      );
     }
 
     return c.json({ data: user, error: null });

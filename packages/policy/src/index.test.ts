@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { evaluatePolicy, POLICY_ACTION_PRECEDENCE, POLICY_PACKAGE_VERSION } from "./index.js";
+import {
+  evaluatePolicy,
+  POLICY_ACTION_PRECEDENCE,
+  POLICY_PACKAGE_VERSION,
+  resolvePolicyMode,
+  simulatePolicyHistory,
+} from "./index.js";
 
 describe("@ai-sdlc/policy", () => {
   it("defines correct action precedence", () => {
@@ -57,5 +63,60 @@ describe("@ai-sdlc/policy", () => {
     expect(result.action).toBe("BLOCK");
     expect(result.requiredApprovals).toHaveLength(0);
     expect(result.reasons).toContain("AI involved change touches secrets.");
+  });
+
+  it("converts blocking rules to review in dry-run mode", () => {
+    expect(resolvePolicyMode("BLOCK", "DRY_RUN")).toBe("REVIEW");
+    expect(resolvePolicyMode("REVIEW", "DRY_RUN")).toBe("REVIEW");
+    expect(resolvePolicyMode("ALLOW", "DISABLED")).toBe("ALLOW");
+  });
+
+  it("simulates a policy batch and summarizes action counts", () => {
+    const result = simulatePolicyHistory(
+      [
+        {
+          aiInvolvement: "YES",
+          aiConfidence: 0.9,
+          sensitiveAreas: ["SECRETS"],
+          riskScore: 90,
+          riskLevel: "CRITICAL",
+          repositoryCriticality: "HIGH",
+          repository: "payments-service",
+          team: "platform-security",
+          pullRequestId: "pr-101",
+        },
+        {
+          aiInvolvement: "YES",
+          aiConfidence: 0.7,
+          sensitiveAreas: ["PAYMENTS"],
+          riskScore: 60,
+          riskLevel: "MEDIUM",
+          repositoryCriticality: "MEDIUM",
+          repository: "billing-api",
+          team: "payments",
+          pullRequestId: "pr-102",
+        },
+        {
+          aiInvolvement: "NO",
+          aiConfidence: 0,
+          sensitiveAreas: [],
+          riskScore: 10,
+          riskLevel: "LOW",
+          repositoryCriticality: "LOW",
+          repository: "docs",
+          team: "docs",
+          pullRequestId: "pr-103",
+        },
+      ],
+      "DRY_RUN",
+    );
+
+    expect(result.mode).toBe("DRY_RUN");
+    expect(result.totalEvaluated).toBe(3);
+    expect(result.block).toBe(0);
+    expect(result.review).toBe(2);
+    expect(result.allow).toBe(1);
+    expect(result.affectedTeams).toEqual(expect.arrayContaining(["platform-security", "payments", "docs"]));
+    expect(result.falsePositiveEstimate).toBeGreaterThanOrEqual(0);
   });
 });
