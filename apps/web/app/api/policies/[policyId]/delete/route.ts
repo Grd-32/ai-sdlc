@@ -20,10 +20,16 @@ export async function POST(
     return NextResponse.redirect(redirectUrl);
   }
 
-  const result = await mutateApi(`/api/organizations/${organizationId}/policies/${policyId}`, "DELETE");
+  const result = await mutateApi(
+    `/api/organizations/${organizationId}/policies/${policyId}`,
+    "DELETE",
+  );
 
   if (!result.ok) {
-    redirectUrl.searchParams.set("policyError", result.error?.message ?? "Failed to delete policy.");
+    redirectUrl.searchParams.set(
+      "policyError",
+      result.error?.message ?? "Failed to delete policy.",
+    );
   }
 
   return NextResponse.redirect(redirectUrl);

@@ -11,6 +11,9 @@ export const JOB_TYPES = {
   PASSPORT_REBUILD: "passport.rebuild",
   HEALTH_CHECK: "system.health.check",
   GITHUB_WEBHOOK_EVENT: "github.webhook.event",
+  SOURCE_CONTROL_WEBHOOK_EVENT: "source-control.webhook.event",
+  ASSESSMENT_RUN: "assessment.run",
+  NOTIFICATION_DELIVER: "notification.deliver",
 } as const;
 
 export type JobType = (typeof JOB_TYPES)[keyof typeof JOB_TYPES];
@@ -24,5 +27,5 @@ export function getRedisUrl(): string {
 }
 
 export function getPort(): number {
-  return Number(process.env["API_PORT"] ?? 3001);
+  return Number(process.env["PORT"] || process.env["API_PORT"] || 3001);
 }

@@ -5,12 +5,17 @@ import { resolve } from "node:path";
 
 const projectRoot = process.cwd();
 const envPath = resolve(projectRoot, ".env");
+const args = process.argv.slice(2);
+
+if (args[0] === "--production") {
+  process.env["NODE_ENV"] = "production";
+  args.shift();
+}
 
 if (existsSync(envPath)) {
   process.loadEnvFile(envPath);
 }
 
-const args = process.argv.slice(2);
 if (args.length === 0) {
   console.error("Usage: run-with-env <command> [args...]");
   process.exit(1);

@@ -20,14 +20,22 @@ export function registerAgentRoutes(app: Hono<AppEnv>): void {
     async (c) => {
       const organizationId = c.get("organizationId");
 
-      // Latest AI attribution per PR (a PR can have multiple AIActivity rows
-      // across pushes if agent/model/source changed — take the most recent).
-      const latestActivities = await prisma.aIActivity.findMany({
+      // Take the latest activity first, then count only confirmed AI use.
+      // UNKNOWN is not an agent and must never appear as one in this report.
+      const activities = await prisma.aIActivity.findMany({
         where: { organizationId, pullRequestId: { not: null } },
-        orderBy: { createdAt: "desc" },
-        distinct: ["pullRequestId"],
-        select: { agent: true, pullRequestId: true, repositoryId: true },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { agent: true, involvement: true, pullRequestId: true, repositoryId: true },
       });
+      const latestByPullRequest = new Map<string, (typeof activities)[number]>();
+      for (const activity of activities) {
+        if (activity.pullRequestId && !latestByPullRequest.has(activity.pullRequestId)) {
+          latestByPullRequest.set(activity.pullRequestId, activity);
+        }
+      }
+      const latestActivities = [...latestByPullRequest.values()].filter(
+        (activity) => activity.involvement === "YES",
+      );
 
       const pullRequestIds = latestActivities
         .map((a) => a.pullRequestId)
@@ -97,7 +105,9 @@ export function registerAgentRoutes(app: Hono<AppEnv>): void {
           repositoryCount: bucket.repositoryIds.size,
           averageRiskScore:
             bucket.riskScores.length > 0
-              ? Math.round(bucket.riskScores.reduce((sum, s) => sum + s, 0) / bucket.riskScores.length)
+              ? Math.round(
+                  bucket.riskScores.reduce((sum, s) => sum + s, 0) / bucket.riskScores.length,
+                )
               : null,
           blockedCount: bucket.blockedCount,
           reviewRequiredCount: bucket.reviewRequiredCount,

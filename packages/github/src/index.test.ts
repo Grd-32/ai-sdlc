@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   GITHUB_PACKAGE_VERSION,
+  MINIMUM_GITHUB_APP_PERMISSIONS,
   computeGitHubWebhookSignature,
   getGitHubAppConfig,
   mapInstallationToOrganization,
@@ -9,6 +10,13 @@ import {
 } from "./index.js";
 
 describe("@ai-sdlc/github", () => {
+  it("requires read access for repository alert reporting", () => {
+    expect(MINIMUM_GITHUB_APP_PERMISSIONS).toMatchObject({
+      security_events: "read",
+      dependabot_alerts: "read",
+    });
+  });
+
   it("exports package version", () => {
     expect(GITHUB_PACKAGE_VERSION).toBe("0.1.0");
   });

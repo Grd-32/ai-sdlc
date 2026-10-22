@@ -8,9 +8,13 @@ import { SELECTED_ORG_COOKIE } from "@/lib/api";
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const orgId = request.nextUrl.searchParams.get("org");
-  const redirectTo = request.nextUrl.searchParams.get("redirectTo") ?? "/dashboard";
+  const requestedRedirect = request.nextUrl.searchParams.get("redirectTo");
+  const redirectTo = getSafeRedirectPath(requestedRedirect);
 
-  const response = NextResponse.redirect(new URL(redirectTo, request.url));
+  const response = new NextResponse(null, {
+    status: 307,
+    headers: { Location: redirectTo },
+  });
 
   if (orgId) {
     response.cookies.set(SELECTED_ORG_COOKIE, orgId, {
@@ -22,4 +26,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   return response;
+}
+
+function getSafeRedirectPath(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+    return "/dashboard";
+  }
+
+  const target = new URL(value, "http://nomalog.invalid");
+  if (target.origin !== "http://nomalog.invalid") {
+    return "/dashboard";
+  }
+
+  return `${target.pathname}${target.search}${target.hash}`;
 }

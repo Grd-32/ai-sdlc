@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { JOB_TYPES, QUEUE_NAMES, WEBHOOK_STATUS, WEBHOOK_RETRY_OPTIONS, getRetentionPolicy } from "./config.js";
+import {
+  JOB_TYPES,
+  QUEUE_NAMES,
+  WEBHOOK_STATUS,
+  WEBHOOK_RETRY_OPTIONS,
+  getRetentionPolicy,
+} from "./config.js";
 
 describe("Worker config", () => {
   it("defines health check job type", () => {
@@ -20,7 +26,9 @@ describe("Worker config", () => {
 
   it("uses safe defaults and validates configured retention ages", () => {
     expect(getRetentionPolicy({})).toEqual({ sessionMaxAgeDays: 30, webhookMaxAgeDays: 90 });
-    expect(getRetentionPolicy({ SESSION_RETENTION_DAYS: "14", WEBHOOK_RETENTION_DAYS: "60" })).toEqual({
+    expect(
+      getRetentionPolicy({ SESSION_RETENTION_DAYS: "14", WEBHOOK_RETENTION_DAYS: "60" }),
+    ).toEqual({
       sessionMaxAgeDays: 14,
       webhookMaxAgeDays: 60,
     });

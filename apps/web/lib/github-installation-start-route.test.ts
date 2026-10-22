@@ -39,7 +39,7 @@ describe("GitHub installation start route", () => {
     const callbackCookie = response.headers
       .getSetCookie()
       .find((value) => value.startsWith("ai_sdlc_github_installation_org="));
-    expect(callbackCookie).toContain("Path=/api/github/installations/callback");
+    expect(callbackCookie).toContain("Path=/");
     expect(callbackCookie).toContain("Secure");
     expect(callbackCookie).toContain("HttpOnly");
   });

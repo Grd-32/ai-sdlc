@@ -40,7 +40,7 @@ describe("API", () => {
     const res = await app.request("/");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { name: string } };
-    expect(body.data.name).toContain("AI-SDLC");
+    expect(body.data.name).toContain("Nomalog");
   });
 
   it("POST /api/webhooks/github accepts valid signatures", async () => {
@@ -81,6 +81,48 @@ describe("API", () => {
     });
 
     expect(res.status).toBe(401);
+  });
+
+  it("POST /api/webhooks/gitlab rejects unauthenticated deliveries", async () => {
+    const response = await app.request("/api/webhooks/gitlab", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("INVALID_WEBHOOK_TOKEN");
+  });
+
+  it("registers the Stripe webhook independently of GitHub webhook requests", async () => {
+    const res = await app.request("/api/webhooks/stripe", { method: "POST" });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("INVALID_WEBHOOK_SIGNATURE");
+  });
+
+  it("rejects invalid Stripe webhook signatures before event processing", async () => {
+    process.env["STRIPE_SECRET_KEY"] = "sk_test_webhook_validation";
+    process.env["STRIPE_WEBHOOK_SECRET"] = "whsec_test_webhook_validation";
+    const payload = JSON.stringify({
+      id: "evt_invalid_signature",
+      type: "product.updated",
+      data: { object: { id: "prod_test" } },
+    });
+    const res = await app.request("/api/webhooks/stripe", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "stripe-signature": `t=${Math.floor(Date.now() / 1000)},v1=deadbeef`,
+      },
+      body: payload,
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("INVALID_WEBHOOK_SIGNATURE");
   });
 
   it("POST /api/webhooks/github accepts duplicate deliveries idempotently", async () => {

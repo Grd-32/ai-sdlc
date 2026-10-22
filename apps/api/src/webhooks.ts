@@ -621,7 +621,8 @@
 // }
 import { createHash } from "node:crypto";
 import { prisma, recordAuditEvent } from "@ai-sdlc/db";
-import { inferAIProvenanceFromPullRequest } from "@ai-sdlc/provenance";
+import { inferAIProvenanceFromPullRequest, type ProvenanceResult } from "@ai-sdlc/provenance";
+import { resolveOrganizationEntitlements } from "@ai-sdlc/billing";
 import {
   enqueueGitHubWebhookEvent,
   enqueuePullRequestAnalysis,
@@ -682,6 +683,7 @@ type PullRequestDelegate = {
       additions: number;
       deletions: number;
       changedFilesCount: number;
+      lastAnalyzedSha?: string | null;
       updatedAt: Date;
       mergedAt: Date | null;
     };
@@ -757,6 +759,7 @@ type AIActivityDelegate = {
       confidence: number;
       source: string;
       metadata: Record<string, unknown> | null;
+      createdAt?: Date;
     };
   }) => Promise<{ id: string }>;
   create: (args: {
@@ -774,10 +777,54 @@ type AIActivityDelegate = {
   }) => Promise<{ id: string }>;
 };
 
+type ProvenanceSignalDelegate = {
+  upsert: (args: {
+    where: {
+      organizationId_signalKey: {
+        organizationId: string;
+        signalKey: string;
+      };
+    };
+    update: {
+      repositoryId: string;
+      pullRequestId: string;
+      provider: string;
+      signalSource: string;
+      sourceType: string;
+      signalType: string;
+      classification: string;
+      verificationStatus: string;
+      evidenceReference: string;
+      evidenceAt: Date;
+      confidence: number;
+      limitations: string;
+      metadata: Record<string, unknown>;
+    };
+    create: {
+      organizationId: string;
+      signalKey: string;
+      repositoryId: string;
+      pullRequestId: string;
+      provider: string;
+      signalSource: string;
+      sourceType: string;
+      signalType: string;
+      classification: string;
+      verificationStatus: string;
+      evidenceReference: string;
+      evidenceAt: Date;
+      confidence: number;
+      limitations: string;
+      metadata: Record<string, unknown>;
+    };
+  }) => Promise<{ id: string }>;
+};
+
 type GitHubInstallationDelegate = {
   findFirst: (args: {
     where: {
       githubInstallationId: string;
+      active?: boolean;
     };
     select: {
       id: true;
@@ -833,6 +880,7 @@ type PrismaWebhookClient = {
   // capital letters up front), so the real generated property is `aIActivity`
   // (capital I) — not `aiActivity`.
   aIActivity: AIActivityDelegate;
+  provenanceSignal: ProvenanceSignalDelegate;
   gitHubInstallation: GitHubInstallationDelegate;
   gitHubWebhookEvent: GitHubWebhookEventDelegate;
 };
@@ -844,6 +892,7 @@ const db = prisma as unknown as PrismaWebhookClient;
 // pipeline (and re-publishing a Check Run) for those would be wasted work and log noise.
 const ANALYZABLE_PULL_REQUEST_ACTIONS = new Set([
   "opened",
+  "edited",
   "synchronize",
   "reopened",
   "ready_for_review",
@@ -926,7 +975,104 @@ export function parseGitHubWebhookEnvelope(
   };
 }
 
-async function persistAIActivityForPullRequest(
+function provenanceSignalData(
+  provenance: ProvenanceResult,
+  repositoryId: string,
+  pullRequestId: string,
+  pullRequestExternalId: string,
+  headSha: string | null,
+) {
+  const evidence = provenance.evidence[0];
+  const reason = evidence?.reason ?? "No provenance evidence available";
+  const normalizedReason = reason.toLowerCase();
+  const classification =
+    provenance.involvement !== "YES"
+      ? "UNKNOWN"
+      : provenance.source === "DEVELOPER_DECLARED"
+        ? "DECLARED"
+        : provenance.source === "BEHAVIORAL_INFERENCE"
+          ? "INFERRED"
+          : provenance.source === "GIT_METADATA" && normalizedReason.includes("pull request author")
+            ? "OBSERVED"
+            : provenance.source === "GIT_METADATA" &&
+                normalizedReason.includes("provenance trailer")
+              ? "DECLARED"
+              : "UNKNOWN";
+  const signalType =
+    classification === "UNKNOWN"
+      ? "NO_MATCHING_PROVENANCE_SIGNAL"
+      : classification === "OBSERVED"
+        ? "KNOWN_AI_BOT_AUTHOR"
+        : classification === "INFERRED"
+          ? "BEHAVIORAL_INFERENCE"
+          : normalizedReason.includes("provenance trailer")
+            ? "DECLARED_COMMIT_TRAILER"
+            : "DECLARED_PULL_REQUEST_TEXT";
+  const limitations =
+    classification === "OBSERVED"
+      ? "The provider identifies an AI coding-agent bot account; this does not prove that all change content was AI-authored."
+      : classification === "DECLARED"
+        ? "AI involvement is self-declared in pull-request metadata and has not been independently verified."
+        : classification === "INFERRED"
+          ? "This classification is an inference and may produce false positives or false negatives."
+          : "Available provider metadata cannot confirm or rule out AI involvement.";
+
+  return {
+    repositoryId,
+    pullRequestId,
+    headSha,
+    provider: "GITHUB",
+    signalSource: provenance.source,
+    sourceType: "GITHUB_PULL_REQUEST_EVENT",
+    signalType,
+    classification,
+    verificationStatus:
+      classification === "OBSERVED"
+        ? "VERIFIED"
+        : classification === "UNKNOWN"
+          ? "NOT_APPLICABLE"
+          : "UNVERIFIED",
+    evidenceReference: `github:pull-request:${pullRequestExternalId}`,
+    evidenceAt: new Date(),
+    confidence: provenance.confidence,
+    limitations,
+    metadata: {
+      agentName: provenance.agentName ?? null,
+      modelName: provenance.modelName ?? null,
+      reason,
+      detail: evidence?.detail ?? null,
+    },
+  };
+}
+
+async function persistCurrentProvenanceSignal(
+  organizationId: string,
+  repositoryId: string,
+  pullRequestId: string,
+  pullRequestExternalId: string,
+  provenance: ProvenanceResult,
+  headSha: string | null,
+): Promise<void> {
+  const signalKey = `github:pull-request:${pullRequestId}:current`;
+  const signalData = provenanceSignalData(
+    provenance,
+    repositoryId,
+    pullRequestId,
+    pullRequestExternalId,
+    headSha,
+  );
+  await db.provenanceSignal.upsert({
+    where: { organizationId_signalKey: { organizationId, signalKey } },
+    create: {
+      organizationId,
+      signalKey,
+      ...signalData,
+    },
+    update: signalData,
+  });
+}
+
+export async function persistAIActivityForPullRequest(
   organizationId: string,
   repositoryId: string,
   pullRequestId: string,
@@ -935,7 +1081,7 @@ async function persistAIActivityForPullRequest(
       id?: string | number;
       title?: string;
       body?: string | null;
-      user?: { login?: string | null } | null;
+      user?: { login?: string | null; type?: string | null } | null;
       head?: { ref?: string | null; sha?: string | null } | null;
     };
   },
@@ -979,8 +1125,17 @@ async function persistAIActivityForPullRequest(
         confidence: provenance.confidence,
         source,
         metadata,
+        createdAt: new Date(),
       },
     });
+    await persistCurrentProvenanceSignal(
+      organizationId,
+      repositoryId,
+      pullRequestId,
+      String(payload.pull_request?.id ?? pullRequestId),
+      provenance,
+      payload.pull_request?.head?.sha ?? null,
+    );
     return;
   }
 
@@ -997,6 +1152,14 @@ async function persistAIActivityForPullRequest(
       metadata,
     },
   });
+  await persistCurrentProvenanceSignal(
+    organizationId,
+    repositoryId,
+    pullRequestId,
+    String(payload.pull_request?.id ?? pullRequestId),
+    provenance,
+    payload.pull_request?.head?.sha ?? null,
+  );
 }
 
 export async function persistGitHubPullRequestEvent(
@@ -1006,6 +1169,7 @@ export async function persistGitHubPullRequestEvent(
   // installation.
   installationId: string,
   payload: {
+    action?: string;
     repository?: {
       id?: string | number;
       name?: string;
@@ -1019,7 +1183,8 @@ export async function persistGitHubPullRequestEvent(
       number?: number;
       title?: string;
       state?: string;
-      user?: { login?: string } | null;
+      body?: string | null;
+      user?: { login?: string; type?: string } | null;
       head?: { ref?: string | null; sha?: string | null } | null;
       base?: { ref?: string | null } | null;
       created_at?: string | null;
@@ -1041,39 +1206,65 @@ export async function persistGitHubPullRequestEvent(
   const repoOwner = repository.owner?.login ?? "unknown";
   const repoName = repository.name ?? repository.full_name?.split("/")[1] ?? "unknown";
 
-  const repoUpsert = await db.repository.upsert({
-    where: {
-      organizationId_provider_owner_name: {
-        organizationId,
-        provider: "GITHUB",
-        owner: repoOwner,
-        name: repoName,
-      },
+  const repoUpsert = await prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${organizationId})) IS NULL AS locked`;
+      const entitlements = await resolveOrganizationEntitlements(organizationId, tx);
+      const existingRepository = await tx.repository.findUnique({
+        where: {
+          organizationId_provider_owner_name: {
+            organizationId,
+            provider: "GITHUB",
+            owner: repoOwner,
+            name: repoName,
+          },
+        },
+        select: { id: true, enabled: true },
+      });
+      if (!existingRepository?.enabled) {
+        const connectedCount = await tx.repository.count({
+          where: { organizationId, enabled: true },
+        });
+        if (connectedCount >= entitlements.entitlements.maxRepositories) {
+          throw new Error("Connected repository limit exceeded for this organization plan.");
+        }
+      }
+      return tx.repository.upsert({
+        where: {
+          organizationId_provider_owner_name: {
+            organizationId,
+            provider: "GITHUB",
+            owner: repoOwner,
+            name: repoName,
+          },
+        },
+        update: {
+          githubInstallationId: installationId,
+          defaultBranch: repository.default_branch ?? null,
+          metadata: {
+            private: repository.private ?? false,
+            source: "github_pull_request_webhook",
+          },
+          enabled: true,
+          updatedAt: new Date(),
+        },
+        create: {
+          organizationId,
+          githubInstallationId: installationId,
+          provider: "GITHUB",
+          owner: repoOwner,
+          name: repoName,
+          defaultBranch: repository.default_branch ?? null,
+          enabled: true,
+          metadata: {
+            private: repository.private ?? false,
+            source: "github_pull_request_webhook",
+          },
+        },
+      });
     },
-    update: {
-      githubInstallationId: installationId,
-      defaultBranch: repository.default_branch ?? null,
-      metadata: {
-        private: repository.private ?? false,
-        source: "github_pull_request_webhook",
-      },
-      enabled: true,
-      updatedAt: new Date(),
-    },
-    create: {
-      organizationId,
-      githubInstallationId: installationId,
-      provider: "GITHUB",
-      owner: repoOwner,
-      name: repoName,
-      defaultBranch: repository.default_branch ?? null,
-      enabled: true,
-      metadata: {
-        private: repository.private ?? false,
-        source: "github_pull_request_webhook",
-      },
-    },
-  });
+    { isolationLevel: "Serializable" },
+  );
 
   const prNumber = pullRequest.number ?? 0;
   const externalId = String(pullRequest.id ?? `${repoName}-${prNumber}`);
@@ -1098,6 +1289,7 @@ export async function persistGitHubPullRequestEvent(
       additions: pullRequest.additions ?? 0,
       deletions: pullRequest.deletions ?? 0,
       changedFilesCount: pullRequest.changed_files ?? 0,
+      lastAnalyzedSha: payload.action === "edited" ? null : undefined,
       updatedAt: new Date(pullRequest.updated_at ?? Date.now()),
       mergedAt: pullRequest.merged_at ? new Date(pullRequest.merged_at) : null,
     },
@@ -1188,6 +1380,26 @@ async function handleInstallationDeleted(githubInstallationId: string): Promise<
     where: { githubInstallationId: existing.id },
     data: { enabled: false },
   });
+  const repositories = await prisma.repository.findMany({
+    where: { githubInstallationId: existing.id, organizationId: existing.organizationId },
+    select: { id: true },
+  });
+  const repositoryIds = repositories.map(({ id }) => id);
+  if (repositoryIds.length > 0) {
+    await prisma.assessment.updateMany({
+      where: {
+        organizationId: existing.organizationId,
+        status: { in: ["CREATED", "AUTHORIZATION_PENDING", "QUEUED", "RUNNING"] },
+        repositories: { some: { repositoryId: { in: repositoryIds } } },
+      },
+      data: {
+        status: "CANCELLED",
+        cancelledAt: new Date(),
+        errorCode: "GITHUB_INSTALLATION_DISCONNECTED",
+        errorMessage: "The GitHub installation was removed from GitHub.",
+      },
+    });
+  }
 
   await recordAuditEvent({
     organizationId: existing.organizationId,
@@ -1285,6 +1497,7 @@ export async function ingestGitHubWebhookDelivery(
       ? await db.gitHubInstallation.findFirst({
           where: {
             githubInstallationId: envelope.installationId,
+            active: true,
           },
           select: {
             id: true,

@@ -5,6 +5,7 @@ describe("processRetentionCleanup", () => {
   it("prunes expired sessions and finalized webhook events using configured ages", async () => {
     const sessionDeleteMany = vi.fn().mockResolvedValue({ count: 2 });
     const webhookDeleteMany = vi.fn().mockResolvedValue({ count: 3 });
+    const assessmentDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
     const organizationFindMany = vi.fn().mockResolvedValue([
       { id: "org-short", webhookRetentionDays: 14 },
       { id: "org-global", webhookRetentionDays: null },
@@ -12,16 +13,25 @@ describe("processRetentionCleanup", () => {
     const prismaClient = {
       session: { deleteMany: sessionDeleteMany },
       gitHubWebhookEvent: { deleteMany: webhookDeleteMany },
+      assessment: { deleteMany: assessmentDeleteMany },
       organization: { findMany: organizationFindMany },
     };
     const now = new Date("2026-10-07T12:00:00.000Z");
 
-    const result = await processRetentionCleanup(prismaClient as unknown as typeof import("@ai-sdlc/db").prisma, {
-      sessionMaxAgeDays: 30,
-      webhookMaxAgeDays: 90,
-    }, now);
+    const result = await processRetentionCleanup(
+      prismaClient as unknown as typeof import("@ai-sdlc/db").prisma,
+      {
+        sessionMaxAgeDays: 30,
+        webhookMaxAgeDays: 90,
+      },
+      now,
+    );
 
-    expect(result).toEqual({ sessionsDeleted: 2, webhookEventsDeleted: 3 });
+    expect(result).toEqual({
+      sessionsDeleted: 2,
+      webhookEventsDeleted: 3,
+      assessmentsDeleted: 1,
+    });
     expect(organizationFindMany).toHaveBeenCalledWith({
       where: { webhookRetentionDays: { not: null } },
       select: { id: true, webhookRetentionDays: true },
@@ -54,6 +64,9 @@ describe("processRetentionCleanup", () => {
           },
         ],
       },
+    });
+    expect(assessmentDeleteMany).toHaveBeenCalledWith({
+      where: { expiresAt: { lte: now } },
     });
   });
 });

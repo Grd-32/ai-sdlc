@@ -1,223 +1,208 @@
 import Link from "next/link";
-import { simulatePolicyHistory } from "@ai-sdlc/policy";
-import type { SensitiveArea } from "@ai-sdlc/risk";
+import { AlertTriangle, Bot, FileCheck2, FolderGit2, GitBranch, ShieldCheck } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getOrganizations, getSelectedOrganization, getOverview } from "@/lib/api";
-
-const controls = [
-  {
-    label: "SSO enforcement",
-    status: "Configuration required",
-    detail: "Configure an identity provider and verified domain before enforcement",
-  },
-  {
-    label: "SCIM provisioning",
-    status: "Available",
-    detail: "Provisioning endpoints exist; connect an identity provider to use them",
-  },
-  {
-    label: "Retention policy",
-    status: "Scheduled",
-    detail: "Session and webhook cleanup jobs run in the worker",
-  },
-  {
-    label: "Policy mode",
-    status: "DRY_RUN",
-    detail: "Default safe execution mode before enforcement",
-  },
-  {
-    label: "Audit trail",
-    status: "Recorded",
-    detail: "Key actions are recorded in the organization log",
-  },
-];
-
-const executiveMetrics = [
-  { key: "aiAssistedPullRequests", label: "AI-assisted PRs", tone: "text-sky-600" },
-  { key: "highRiskChanges", label: "High-risk changes", tone: "text-amber-600" },
-  { key: "criticalChanges", label: "Critical changes", tone: "text-red-600" },
-  { key: "blockedChanges", label: "Blocked changes", tone: "text-red-600" },
-  { key: "reviewRequiredChanges", label: "Review required", tone: "text-amber-600" },
-  { key: "totalPassports", label: "Change Passports", tone: "text-slate-900" },
-] as const;
-
-const samplePolicyHistory = [
-  {
-    aiInvolvement: "YES" as const,
-    aiConfidence: 0.94,
-    sensitiveAreas: ["SECRETS"] as SensitiveArea[],
-    riskScore: 94,
-    riskLevel: "CRITICAL" as const,
-    repositoryCriticality: "HIGH" as const,
-    repository: "payments-service",
-    team: "Platform Security",
-    pullRequestId: "PR-101",
-  },
-  {
-    aiInvolvement: "YES" as const,
-    aiConfidence: 0.76,
-    sensitiveAreas: ["PAYMENTS"] as SensitiveArea[],
-    riskScore: 58,
-    riskLevel: "MEDIUM" as const,
-    repositoryCriticality: "MEDIUM" as const,
-    repository: "billing-api",
-    team: "Payments",
-    pullRequestId: "PR-102",
-  },
-  {
-    aiInvolvement: "NO" as const,
-    aiConfidence: 0,
-    sensitiveAreas: [] as SensitiveArea[],
-    riskScore: 10,
-    riskLevel: "LOW" as const,
-    repositoryCriticality: "LOW" as const,
-    repository: "docs",
-    team: "Docs",
-    pullRequestId: "PR-103",
-  },
-] satisfies Parameters<typeof simulatePolicyHistory>[0];
-
-const complianceReadiness = [
-  "Organization-level policies are available; review configured rules before enforcement.",
-  "Audit events are recorded; verify retention and export requirements for your deployment.",
-  "Role-based access is enforced; confirm that organization memberships and roles are correct.",
-  "Operational runbooks are available; production recovery and response sign-off remain operator tasks.",
-];
+import {
+  getEvidence,
+  getInstallations,
+  getOrganizations,
+  getOverview,
+  getPolicies,
+  getRepositories,
+  getSelectedOrganization,
+} from "@/lib/api";
 
 export default async function AdminPage() {
   const organizations = await getOrganizations();
   const selectedOrg = await getSelectedOrganization(organizations);
-  const overview = selectedOrg ? await getOverview(selectedOrg.id) : null;
-  const policySimulation = simulatePolicyHistory(samplePolicyHistory, "DRY_RUN");
-  const simulationRows = policySimulation.decisions.map((decision) => ({
-    scenario: decision.pullRequestId ?? decision.repository ?? "Unknown change",
-    risk: decision.riskLevel,
-    action: decision.action,
-    owner: decision.team ?? "Security",
-  }));
 
   if (!selectedOrg) {
     return null;
   }
 
+  if (!["OWNER", "ADMIN"].includes(selectedOrg.role.toUpperCase())) {
+    return (
+      <Card className="mx-auto max-w-2xl">
+        <CardHeader>
+          <CardTitle className="text-base">Administrator access required</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm text-slate-600">
+          <p>
+            The administration console contains organization configuration and readiness
+            information. Ask an organization owner or administrator to grant you access.
+          </p>
+          <Link href="/dashboard" className="font-medium text-orange-700 hover:text-orange-800">
+            Return to overview
+          </Link>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const [overview, repositories, installations, policies, evidence] = await Promise.all([
+    getOverview(selectedOrg.id),
+    getRepositories(selectedOrg.id),
+    getInstallations(selectedOrg.id),
+    getPolicies(selectedOrg.id),
+    getEvidence(selectedOrg.id),
+  ]);
+  const activeInstallations = installations.filter((installation) => installation.active).length;
+  const enabledRepositories = repositories.filter((repository) => repository.enabled).length;
+  const enabledPolicies = policies.filter((policy) => policy.enabled);
+  const evidenceNotRun = evidence.filter((item) => item.status === "NOT_RUN").length;
+  const evidenceFailed = evidence.filter((item) => item.status === "FAIL").length;
+
+  const sections = [
+    {
+      label: "GitHub integration",
+      value: `${activeInstallations} active`,
+      detail: `${enabledRepositories} enabled repositories`,
+      href: "/dashboard/repositories",
+      icon: FolderGit2,
+      tone: activeInstallations > 0 ? "text-emerald-700" : "text-amber-700",
+      status: activeInstallations > 0 ? "Connected" : "Setup required",
+    },
+    {
+      label: "Policy coverage",
+      value: `${enabledPolicies.length} enabled`,
+      detail: `${policies.length} organization policies`,
+      href: "/dashboard/policies",
+      icon: ShieldCheck,
+      tone: enabledPolicies.length > 0 ? "text-sky-700" : "text-slate-700",
+      status: enabledPolicies.length > 0 ? "Configured" : "No custom policies",
+    },
+    {
+      label: "AI provenance",
+      value: `${overview?.aiAssistedPullRequests ?? "—"} verified`,
+      detail: `${overview?.unattributedPullRequests ?? "—"} unknown`,
+      href: "/dashboard/agents",
+      icon: Bot,
+      tone: "text-sky-700",
+      status: "Evidence-based",
+    },
+    {
+      label: "Security evidence",
+      value: `${evidence.length} records`,
+      detail: `${evidenceNotRun} not run · ${evidenceFailed} failed`,
+      href: "/dashboard/evidence",
+      icon: FileCheck2,
+      tone: evidenceFailed > 0 || evidenceNotRun > 0 ? "text-amber-700" : "text-emerald-700",
+      status:
+        evidenceFailed > 0
+          ? "Failures recorded"
+          : evidenceNotRun > 0
+            ? "Coverage incomplete"
+            : evidence.length > 0
+              ? "Evidence recorded"
+              : "No evidence yet",
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Admin console</h1>
-          <p className="text-sm text-slate-500">{selectedOrg.name}</p>
-        </div>
-        <Link
-          href="/dashboard/settings"
-          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Open settings
-        </Link>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {executiveMetrics.map((metric) => (
-          <Card key={metric.label}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-slate-500">{metric.label}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className={`text-3xl font-semibold ${metric.tone}`}>
-                {overview ? overview[metric.key] : "—"}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      {!overview && (
-        <p role="status" className="text-sm text-amber-800">
-          Live organization metrics are temporarily unavailable.
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+          Organization controls
         </p>
-      )}
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">
+          Administration
+        </h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Live configuration and governance coverage for {selectedOrg.name}
+        </p>
+      </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Enterprise controls</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {controls.map((control) => (
-              <div
-                key={control.label}
-                className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-3"
-              >
-                <div>
-                  <div className="font-medium text-slate-900">{control.label}</div>
-                  <div className="text-sm text-slate-500">{control.detail}</div>
-                </div>
-                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                  {control.status}
-                </span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Readiness notes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="list-disc space-y-2 pl-5 text-sm text-slate-600">
-              {complianceReadiness.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {sections.map((section) => {
+          const Icon = section.icon;
+          return (
+            <Link key={section.label} href={section.href} className="group">
+              <Card className="h-full transition-colors group-hover:border-slate-300">
+                <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
+                  <div>
+                    <p className="text-sm font-medium text-slate-600">{section.label}</p>
+                    <p className={`mt-2 text-xl font-semibold ${section.tone}`}>{section.value}</p>
+                  </div>
+                  <Icon className={`h-5 w-5 ${section.tone}`} />
+                </CardHeader>
+                <CardContent className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-slate-500">{section.detail}</p>
+                  <Badge variant="outline">{section.status}</Badge>
+                </CardContent>
+              </Card>
+            </Link>
+          );
+        })}
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Example policy simulation</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="mb-4 text-sm text-slate-500">
-            Illustrative sample scenarios only; these rows are not organization pull requests or
-            policy decisions.
+          <CardTitle className="text-base">Operational readiness</CardTitle>
+          <p className="text-sm text-slate-500">
+            These indicators reflect recorded organization data, not sample scenarios.
           </p>
-          <div className="overflow-hidden rounded-lg border border-slate-200">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Scenario</th>
-                  <th className="px-4 py-3 font-medium">Risk</th>
-                  <th className="px-4 py-3 font-medium">Result</th>
-                  <th className="px-4 py-3 font-medium">Owner</th>
-                </tr>
-              </thead>
-              <tbody>
-                {simulationRows.map((row) => (
-                  <tr key={row.scenario} className="border-t border-slate-200">
-                    <td className="px-4 py-3 font-medium text-slate-900">{row.scenario}</td>
-                    <td className="px-4 py-3">
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
-                        {row.risk}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={
-                          row.action === "BLOCK"
-                            ? "text-red-600"
-                            : row.action === "REVIEW"
-                              ? "text-amber-600"
-                              : "text-emerald-600"
-                        }
-                      >
-                        {row.action}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-500">{row.owner}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        </CardHeader>
+        <CardContent className="divide-y divide-slate-200 p-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div className="flex items-start gap-3">
+              <GitBranch className="mt-0.5 h-4 w-4 text-slate-500" />
+              <div>
+                <p className="text-sm font-medium text-slate-900">Repositories monitored</p>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  {enabledRepositories} enabled of {repositories.length} connected
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/dashboard/repositories"
+              className="text-sm font-medium text-orange-700 hover:text-orange-800"
+            >
+              Manage repositories
+            </Link>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="mt-0.5 h-4 w-4 text-slate-500" />
+              <div>
+                <p className="text-sm font-medium text-slate-900">Policy modes</p>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  {enabledPolicies.length === 0
+                    ? "No enabled organization policies"
+                    : enabledPolicies
+                        .map((policy) => `${policy.mode.replaceAll("_", " ")} · ${policy.name}`)
+                        .join("; ")}
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/dashboard/policies"
+              className="text-sm font-medium text-orange-700 hover:text-orange-800"
+            >
+              Review policies
+            </Link>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
+              <div>
+                <p className="text-sm font-medium text-slate-900">Evidence coverage</p>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  {evidenceNotRun > 0
+                    ? `${evidenceNotRun} checks are marked NOT RUN; these are not passing results.`
+                    : evidence.length > 0
+                      ? "Recorded evidence is available for review."
+                      : "No evidence has been recorded yet."}
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/dashboard/evidence"
+              className="text-sm font-medium text-orange-700 hover:text-orange-800"
+            >
+              View evidence
+            </Link>
           </div>
         </CardContent>
       </Card>

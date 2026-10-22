@@ -69,4 +69,3 @@ Once the app is on a production-grade deployment topology, extend the benchmark 
 - Redis queue depth and worker saturation metrics
 - database query timing and Prisma explain analysis
 - autoscaling thresholds and alerting rules
-

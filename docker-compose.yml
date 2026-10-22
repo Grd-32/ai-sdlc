@@ -40,7 +40,7 @@ services:
       API_PORT: 3001
       APP_URL: ${APP_URL:-http://localhost:3000}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-      OTEL_SERVICE_NAME: ai-sdlc-api
+      OTEL_SERVICE_NAME: nomalog-api
     ports:
       - "3001:3001"
     depends_on:
@@ -95,11 +95,13 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
         NEXT_PUBLIC_GITHUB_APP_SLUG: ${NEXT_PUBLIC_GITHUB_APP_SLUG:-}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-${APP_URL:-http://localhost:3000}}
     env_file:
       - .env
     environment:
       NODE_ENV: development
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-${APP_URL:-http://localhost:3000}}
       API_INTERNAL_URL: http://api:3001
     ports:
       - "3000:3000"

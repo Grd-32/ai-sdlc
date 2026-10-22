@@ -745,16 +745,12 @@ describe("Provider Integration", () => {
 describe("Phase 11: AI Change Passport", () => {
   describe("deriveChangePassport", () => {
     it("creates a minimal passport with just required fields", () => {
-      const passport = deriveChangePassport(
-        "passport-001",
-        "org-001",
-        {
-          number: 42,
-          title: "Add payment feature",
-          author: "developer@example.com",
-          repositoryName: "payments-api",
-        },
-      );
+      const passport = deriveChangePassport("passport-001", "org-001", {
+        number: 42,
+        title: "Add payment feature",
+        author: "developer@example.com",
+        repositoryName: "payments-api",
+      });
 
       expect(passport.id).toBe("passport-001");
       expect(passport.organizationId).toBe("org-001");
@@ -788,26 +784,20 @@ describe("Phase 11: AI Change Passport", () => {
     });
 
     it("includes changed files and sensitive areas", () => {
-      const passport = deriveChangePassport(
-        "passport-001",
-        "org-001",
-        { number: 42 },
-        undefined,
-        [
-          {
-            filePath: "src/payments/refund.ts",
-            sensitiveAreas: ["PAYMENTS", "AUTHORIZATION"],
-            additions: 47,
-            deletions: 12,
-          },
-          {
-            filePath: "src/tests/refund.test.ts",
-            sensitiveAreas: ["TESTING"],
-            additions: 85,
-            deletions: 0,
-          },
-        ],
-      );
+      const passport = deriveChangePassport("passport-001", "org-001", { number: 42 }, undefined, [
+        {
+          filePath: "src/payments/refund.ts",
+          sensitiveAreas: ["PAYMENTS", "AUTHORIZATION"],
+          additions: 47,
+          deletions: 12,
+        },
+        {
+          filePath: "src/tests/refund.test.ts",
+          sensitiveAreas: ["TESTING"],
+          additions: 85,
+          deletions: 0,
+        },
+      ]);
 
       expect(passport.changedFiles).toHaveLength(2);
       const firstFile = passport.changedFiles.at(0);
@@ -1021,7 +1011,14 @@ describe("Phase 11: AI Change Passport", () => {
           confidence: 0.9,
           source: "DEVELOPER_DECLARED",
         },
-        [{ filePath: "src/payments/main.ts", sensitiveAreas: ["PAYMENTS"], additions: 50, deletions: 10 }],
+        [
+          {
+            filePath: "src/payments/main.ts",
+            sensitiveAreas: ["PAYMENTS"],
+            additions: 50,
+            deletions: 10,
+          },
+        ],
         { score: 70, level: "HIGH", modelVersion: "risk-v1" },
         { action: "REVIEW", matchedRuleIds: [], requiredApprovals: ["security"] },
       );
@@ -1055,11 +1052,32 @@ describe("Phase 11: AI Change Passport", () => {
       const passport = deriveChangePassport(
         "passport-001",
         "org-001",
-        { number: 42, title: "Payment refund", author: "alice@example.com", repositoryName: "payments" },
+        {
+          number: 42,
+          title: "Payment refund",
+          author: "alice@example.com",
+          repositoryName: "payments",
+        },
         { involvement: "YES", agent: "Claude", confidence: 0.94, source: "DEVELOPER_DECLARED" },
-        [{ filePath: "src/payments/refund.ts", sensitiveAreas: ["PAYMENTS"], additions: 100, deletions: 20 }],
-        { score: 75, level: "HIGH", modelVersion: "risk-v1", explanation: "Payment code modification" },
-        { action: "REVIEW", matchedRuleIds: ["rule-001"], requiredApprovals: ["security", "senior"] },
+        [
+          {
+            filePath: "src/payments/refund.ts",
+            sensitiveAreas: ["PAYMENTS"],
+            additions: 100,
+            deletions: 20,
+          },
+        ],
+        {
+          score: 75,
+          level: "HIGH",
+          modelVersion: "risk-v1",
+          explanation: "Payment code modification",
+        },
+        {
+          action: "REVIEW",
+          matchedRuleIds: ["rule-001"],
+          requiredApprovals: ["security", "senior"],
+        },
       );
 
       const formatted = formatPassportForDisplay(passport);
@@ -1225,7 +1243,12 @@ describe("Phase 11: AI Change Passport", () => {
         "passport-001",
         "org-001",
         { number: 42 },
-        { involvement: "YES", agent: "Claude Code", confidence: 0.94, source: "DEVELOPER_DECLARED" },
+        {
+          involvement: "YES",
+          agent: "Claude Code",
+          confidence: 0.94,
+          source: "DEVELOPER_DECLARED",
+        },
       );
 
       expect(passport.explanation).toContain("YES");

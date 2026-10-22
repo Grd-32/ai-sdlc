@@ -5,6 +5,7 @@ import {
   POLICY_PACKAGE_VERSION,
   resolvePolicyMode,
   simulatePolicyHistory,
+  validatePolicyCondition,
 } from "./index.js";
 
 describe("@ai-sdlc/policy", () => {
@@ -65,6 +66,152 @@ describe("@ai-sdlc/policy", () => {
     expect(result.reasons).toContain("AI involved change touches secrets.");
   });
 
+  it("reviews when unknown AI provenance could satisfy a rule", () => {
+    const result = evaluatePolicy(
+      {
+        aiInvolvement: "UNKNOWN",
+        aiConfidence: 0,
+        sensitiveAreas: [],
+        riskScore: 10,
+        riskLevel: "LOW",
+        repositoryCriticality: "LOW",
+      },
+      [
+        {
+          id: "confirmed-non-ai",
+          name: "Confirmed non-AI only",
+          conditions: { aiInvolved: false },
+          action: "ALLOW",
+          requiredApprovals: [],
+          reason: "Only allow changes confirmed as non-AI.",
+        },
+      ],
+    );
+
+    expect(result.action).toBe("REVIEW");
+    expect(result.matchedPolicies).toHaveLength(0);
+    expect(result.indeterminatePolicies).toEqual([
+      { policyId: "confirmed-non-ai", policyName: "Confirmed non-AI only" },
+    ]);
+    expect(result.reasons.join(" ")).toContain("Defaulting to REVIEW.");
+  });
+
+  it("treats a known nonmatching condition as NO_MATCH even when AI provenance is unknown", () => {
+    const result = evaluatePolicy(
+      {
+        aiInvolvement: "UNKNOWN",
+        aiConfidence: 0,
+        sensitiveAreas: [],
+        riskScore: 10,
+        riskLevel: "LOW",
+        repositoryCriticality: "LOW",
+      },
+      [
+        {
+          id: "payments-only",
+          name: "Payments only",
+          conditions: { aiInvolved: true, sensitiveAreasInclude: ["PAYMENTS"] },
+          action: "BLOCK",
+          requiredApprovals: [],
+          reason: "Payment changes are blocked.",
+        },
+      ],
+    );
+
+    expect(result.action).toBe("ALLOW");
+    expect(result.indeterminatePolicies).toHaveLength(0);
+  });
+
+  it("evaluates nested AND, OR, and NOT expressions", () => {
+    const result = evaluatePolicy(
+      {
+        aiInvolvement: "YES",
+        aiConfidence: 0.9,
+        sensitiveAreas: ["PAYMENTS"],
+        riskScore: 60,
+        riskLevel: "MEDIUM",
+        repositoryCriticality: "HIGH",
+      },
+      [
+        {
+          id: "nested-rule",
+          name: "Nested rule",
+          conditions: {},
+          conditionExpression: {
+            op: "AND",
+            conditions: [
+              { field: "AI_INVOLVEMENT", equals: "YES" },
+              {
+                op: "OR",
+                conditions: [
+                  { field: "SENSITIVE_AREAS", includes: ["PAYMENTS"] },
+                  { op: "NOT", condition: { field: "RISK_SCORE", atLeast: 80 } },
+                ],
+              },
+            ],
+          },
+          action: "BLOCK",
+          requiredApprovals: [],
+          reason: "Nested condition matched.",
+        },
+      ],
+    );
+
+    expect(result.action).toBe("BLOCK");
+    expect(result.matchedPolicies.map((policy) => policy.policyId)).toContain("nested-rule");
+  });
+
+  it("lets rules explicitly match unknown AI provenance", () => {
+    const result = evaluatePolicy(
+      {
+        aiInvolvement: "UNKNOWN",
+        aiConfidence: 0,
+        sensitiveAreas: [],
+        riskScore: 10,
+        riskLevel: "LOW",
+        repositoryCriticality: "LOW",
+      },
+      [
+        {
+          id: "unknown-provenance",
+          name: "Unknown provenance",
+          conditions: {},
+          conditionExpression: { field: "AI_INVOLVEMENT", equals: "UNKNOWN" },
+          action: "BLOCK",
+          requiredApprovals: [],
+          reason: "Unknown provenance is explicitly blocked.",
+        },
+      ],
+    );
+
+    expect(result.action).toBe("BLOCK");
+    expect(result.indeterminatePolicies).toHaveLength(0);
+  });
+
+  it("validates expression shape and bounds", () => {
+    expect(
+      validatePolicyCondition({
+        op: "OR",
+        conditions: [
+          { field: "AI_INVOLVEMENT", equals: "UNKNOWN" },
+          { op: "NOT", condition: { field: "RISK_SCORE", atLeast: 80 } },
+        ],
+      }),
+    ).toBeNull();
+    expect(
+      validatePolicyCondition({
+        field: "RISK_SCORE",
+        atLeast: 101,
+      }),
+    ).toContain("0 to 100");
+    expect(
+      validatePolicyCondition({
+        op: "AND",
+        conditions: [],
+      }),
+    ).toContain("between 1 and 10");
+  });
+
   it("converts blocking rules to review in dry-run mode", () => {
     expect(resolvePolicyMode("BLOCK", "DRY_RUN")).toBe("REVIEW");
     expect(resolvePolicyMode("REVIEW", "DRY_RUN")).toBe("REVIEW");
@@ -116,7 +263,9 @@ describe("@ai-sdlc/policy", () => {
     expect(result.block).toBe(0);
     expect(result.review).toBe(2);
     expect(result.allow).toBe(1);
-    expect(result.affectedTeams).toEqual(expect.arrayContaining(["platform-security", "payments", "docs"]));
-    expect(result.falsePositiveEstimate).toBeGreaterThanOrEqual(0);
+    expect(result.affectedTeams).toEqual(
+      expect.arrayContaining(["platform-security", "payments", "docs"]),
+    );
+    expect(result).not.toHaveProperty("falsePositiveEstimate");
   });
 });

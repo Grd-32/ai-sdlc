@@ -299,6 +299,112 @@ function sanitizeRedirectPath(candidate: string | undefined | null): string {
   return candidate;
 }
 
+interface GitHubProfile {
+  githubUserId: string;
+  username: string;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+  avatarUrl: string | null;
+}
+
+class GitHubAccountConflictError extends Error {
+  constructor() {
+    super("The verified email is already linked to a different GitHub account.");
+    this.name = "GitHubAccountConflictError";
+  }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
+
+async function resolveGitHubUser(
+  profile: GitHubProfile,
+): Promise<{ user: { id: string }; created: boolean }> {
+  const profileUpdate = {
+    username: profile.username,
+    name: profile.name,
+    avatarUrl: profile.avatarUrl,
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const githubUser = await prisma.user.findUnique({
+      where: { githubUserId: profile.githubUserId },
+      select: { id: true, email: true },
+    });
+    if (githubUser) {
+      const emailOwner =
+        githubUser.email === profile.email
+          ? null
+          : await prisma.user.findUnique({
+              where: { email: profile.email },
+              select: { id: true },
+            });
+      try {
+        const user = await prisma.user.update({
+          where: { id: githubUser.id },
+          data: {
+            ...profileUpdate,
+            email:
+              profile.emailVerified && (!emailOwner || emailOwner.id === githubUser.id)
+                ? profile.email
+                : githubUser.email,
+          },
+          select: { id: true },
+        });
+        return { user, created: false };
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) throw error;
+        continue;
+      }
+    }
+
+    const emailUser = await prisma.user.findUnique({
+      where: { email: profile.email },
+      select: { id: true, githubUserId: true },
+    });
+    if (emailUser) {
+      if (!profile.emailVerified) {
+        throw new GitHubAccountConflictError();
+      }
+      if (emailUser.githubUserId && emailUser.githubUserId !== profile.githubUserId) {
+        throw new GitHubAccountConflictError();
+      }
+      try {
+        const linked = await prisma.user.updateMany({
+          where: { id: emailUser.id, githubUserId: null },
+          data: { githubUserId: profile.githubUserId, ...profileUpdate },
+        });
+        if (linked.count === 1) {
+          return {
+            user: { id: emailUser.id },
+            created: false,
+          };
+        }
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) throw error;
+      }
+      continue;
+    }
+
+    try {
+      const user = await prisma.user.create({
+        data: {
+          githubUserId: profile.githubUserId,
+          email: profile.email,
+          ...profileUpdate,
+        },
+        select: { id: true },
+      });
+      return { user, created: true };
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) throw error;
+    }
+  }
+  throw new GitHubAccountConflictError();
+}
+
 export function registerAuthRoutes(app: Hono<AppEnv>): void {
   app.get("/api/auth/github/login", (c) => {
     const { clientId, callbackUrl } = getOAuthRuntimeConfig();
@@ -337,54 +443,66 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
     const code = c.req.query("code");
     const state = c.req.query("state");
+    const providerError = c.req.query("error");
     const expectedState = getCookie(c, OAUTH_STATE_COOKIE);
     const redirectTo = sanitizeRedirectPath(getCookie(c, OAUTH_REDIRECT_COOKIE));
     deleteCookie(c, OAUTH_STATE_COOKIE, { path: "/" });
     deleteCookie(c, OAUTH_REDIRECT_COOKIE, { path: "/" });
+    const recoveryUrl = (reason: "cancelled" | "failed" | "expired") => {
+      const url = new URL("/onboarding", appUrl);
+      url.searchParams.set("authError", reason);
+      return c.redirect(url.toString());
+    };
+    const accountConflictUrl = () => {
+      const url = new URL("/onboarding", appUrl);
+      url.searchParams.set("authError", "account-conflict");
+      return c.redirect(url.toString());
+    };
+
+    if (providerError) {
+      return recoveryUrl(providerError === "access_denied" ? "cancelled" : "failed");
+    }
 
     if (!code || !state || !expectedState || state !== expectedState) {
-      return c.json(
-        {
-          data: null,
-          error: { code: "OAUTH_STATE_MISMATCH", message: "Invalid or expired OAuth state" },
-        },
-        400,
-      );
+      return recoveryUrl("expired");
     }
 
-    const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
-      method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: clientId,
-        client_secret: clientSecret,
-        code,
-        redirect_uri: callbackUrl,
-      }),
-    }).catch(() => null);
+    let tokenResponse: Response | null;
+    try {
+      tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+          redirect_uri: callbackUrl,
+        }),
+      });
+    } catch (error) {
+      console.error("[github-oauth] token exchange request failed", error);
+      tokenResponse = null;
+    }
 
     if (!tokenResponse || !tokenResponse.ok) {
-      return c.json(
-        {
-          data: null,
-          error: { code: "OAUTH_TOKEN_REQUEST_FAILED", message: "GitHub token exchange failed" },
-        },
-        502,
-      );
+      if (tokenResponse) {
+        console.error("[github-oauth] token exchange returned an error", {
+          status: tokenResponse.status,
+        });
+      }
+      return recoveryUrl("failed");
     }
 
-    const tokenData = (await tokenResponse.json()) as { access_token?: string; error?: string };
+    let tokenData: { access_token?: string; error?: string };
+    try {
+      tokenData = (await tokenResponse.json()) as { access_token?: string; error?: string };
+    } catch (error) {
+      console.error("[github-oauth] token exchange returned invalid JSON", error);
+      return recoveryUrl("failed");
+    }
     if (!tokenData.access_token) {
-      return c.json(
-        {
-          data: null,
-          error: {
-            code: "OAUTH_TOKEN_REQUEST_FAILED",
-            message: tokenData.error ?? "No access token returned",
-          },
-        },
-        400,
-      );
+      console.error("[github-oauth] token exchange response did not contain an access token");
+      return recoveryUrl("failed");
     }
 
     const authHeaders = {
@@ -392,73 +510,90 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       Accept: "application/vnd.github+json",
     };
 
-    const [userResponse, emailsResponse] = await Promise.all([
-      fetch("https://api.github.com/user", { headers: authHeaders }),
-      fetch("https://api.github.com/user/emails", { headers: authHeaders }),
-    ]);
-
-    if (!userResponse.ok) {
-      return c.json(
-        {
-          data: null,
-          error: { code: "OAUTH_PROFILE_FETCH_FAILED", message: "Failed to fetch GitHub profile" },
-        },
-        502,
-      );
+    let userResponse: Response;
+    let emailsResponse: Response | null;
+    try {
+      [userResponse, emailsResponse] = await Promise.all([
+        fetch("https://api.github.com/user", { headers: authHeaders }),
+        fetch("https://api.github.com/user/emails", { headers: authHeaders }).catch(
+          (error: unknown) => {
+            console.warn("[github-oauth] private email lookup failed", error);
+            return null;
+          },
+        ),
+      ]);
+    } catch (error) {
+      console.error("[github-oauth] GitHub profile lookup failed", error);
+      return recoveryUrl("failed");
     }
 
-    const githubUser = (await userResponse.json()) as {
+    if (!userResponse.ok) {
+      console.error("[github-oauth] GitHub profile lookup returned an error", {
+        status: userResponse.status,
+      });
+      return recoveryUrl("failed");
+    }
+
+    let githubUser: {
       id: number;
       login: string;
       name?: string | null;
       avatar_url?: string | null;
       email?: string | null;
     };
-
-    let primaryEmail = githubUser.email ?? null;
-    if (!primaryEmail && emailsResponse.ok) {
-      const emails = (await emailsResponse.json()) as Array<{
-        email: string;
-        primary: boolean;
-        verified: boolean;
-      }>;
-      primaryEmail =
-        emails.find((e) => e.primary && e.verified)?.email ??
-        emails.find((e) => e.verified)?.email ??
-        null;
+    try {
+      githubUser = (await userResponse.json()) as typeof githubUser;
+    } catch (error) {
+      console.error("[github-oauth] GitHub profile response was invalid", error);
+      return recoveryUrl("failed");
     }
 
+    let verifiedEmail: string | null = null;
+    if (emailsResponse?.ok) {
+      try {
+        const emails = (await emailsResponse.json()) as Array<{
+          email: string;
+          primary: boolean;
+          verified: boolean;
+        }>;
+        verifiedEmail =
+          emails.find((e) => e.primary && e.verified)?.email ??
+          emails.find((e) => e.verified)?.email ??
+          null;
+      } catch (error) {
+        console.warn("[github-oauth] GitHub email response was invalid", error);
+      }
+    } else if (emailsResponse) {
+      console.warn("[github-oauth] GitHub verified-email lookup returned an error", {
+        status: emailsResponse.status,
+      });
+    }
+
+    const primaryEmail = verifiedEmail ?? githubUser.email ?? null;
     if (!primaryEmail) {
-      return c.json(
-        {
-          data: null,
-          error: {
-            code: "OAUTH_EMAIL_REQUIRED",
-            message: "Your GitHub account has no accessible verified email address.",
-          },
-        },
-        400,
-      );
+      console.error("[github-oauth] no usable email was available from the GitHub account");
+      return recoveryUrl("failed");
     }
 
     const githubUserId = String(githubUser.id);
-
-    const user = await prisma.user.upsert({
-      where: { githubUserId },
-      update: {
-        email: primaryEmail,
-        name: githubUser.name ?? githubUser.login,
-        avatarUrl: githubUser.avatar_url ?? null,
-        username: githubUser.login,
-      },
-      create: {
-        githubUserId,
+    let resolvedUser: Awaited<ReturnType<typeof resolveGitHubUser>>;
+    try {
+      resolvedUser = await resolveGitHubUser({
+        githubUserId: String(githubUser.id),
         username: githubUser.login,
         email: primaryEmail,
+        emailVerified: verifiedEmail !== null,
         name: githubUser.name ?? githubUser.login,
         avatarUrl: githubUser.avatar_url ?? null,
-      },
-    });
+      });
+    } catch (error) {
+      if (error instanceof GitHubAccountConflictError) {
+        console.warn("[github-oauth] verified email is linked to another GitHub identity");
+        return accountConflictUrl();
+      }
+      throw error;
+    }
+    const { user, created } = resolvedUser;
 
     const sessionToken = await createSessionCookieValue(user.id, {
       ipAddress: c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip"),
@@ -481,7 +616,11 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       metadata: { githubUserId, username: githubUser.login },
     });
 
-    return c.redirect(`${appUrl}${redirectTo}`);
+    const destination = new URL(redirectTo, appUrl);
+    if (created) {
+      destination.searchParams.set("signup", "completed");
+    }
+    return c.redirect(destination.toString());
   });
 
   // GET (not just POST) so Settings can use a plain <a href> link — no

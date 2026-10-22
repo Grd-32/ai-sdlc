@@ -1,4 +1,4 @@
-// AI-SDLC Control Plane
+// Nomalog
 // Phase 1: tenant-aware domain foundation for organizations, repositories, evidence, and governance records.
 // Phase 12: adds PullRequest.headSha / githubCheckRunId / lastAnalyzedSha for idempotent Check Run
 // publishing, and additions/deletions/changedFilesCount (replacing a `metadata` field that
@@ -6,6 +6,46 @@
 
 generator client {
   provider = "prisma-client-js"
+}
+
+model OrganizationDeletionRequest {
+  id             String    @id @default(cuid())
+  organizationId String?
+  organizationSlug String
+  requestedById  String?
+  approvedById   String?
+  approvedAt     DateTime?
+  status         String    @default("PENDING")
+  failureReason  String?
+  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime?
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  requestedBy  User?        @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+}
+
+model OrganizationInvitation {
+  id             String    @id @default(cuid())
+  organizationId String
+  email          String
+  role           String    @default("VIEWER")
+  tokenHash      String    @unique
+  createdById    String
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  acceptedById   String?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  acceptedBy   User?        @relation("InvitationAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+  notifications Notification[]
+
+  @@index([organizationId, email, acceptedAt, revokedAt])
+  @@index([expiresAt])
 }
 
 datasource db {
@@ -20,6 +60,8 @@ enum OrganizationRole {
   SECURITY_ADMIN
   SECURITY_ANALYST
   ENGINEER
+  SENIOR_ENGINEER
+  PLATFORM_ENGINEER
   REVIEWER
   VIEWER
   AUDITOR
@@ -93,80 +135,169 @@ enum EvidenceStatus {
   NOT_APPLICABLE
 }
 
+enum AssessmentStatus {
+  CREATED
+  AUTHORIZATION_PENDING
+  QUEUED
+  RUNNING
+  COMPLETED
+  COMPLETED_WITH_LIMITATIONS
+  FAILED
+  CANCELLED
+}
+
 enum ReviewDecision {
   APPROVED
   REJECTED
   CHANGES_REQUESTED
 }
 
+enum CommercialPlan {
+  FREE_ASSESSMENT
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum BillingSubscriptionStatus {
+  INCOMPLETE
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  UNPAID
+  CANCELED
+  INACTIVE
+}
+
+enum BillingProvider {
+  STRIPE
+  MANUAL
+}
+
+enum BillableUsageType {
+  ASSESSMENT_ATTEMPT
+  ASSESSMENT_COMPLETED
+  ANALYSIS_JOB
+}
+
+enum SourceControlProvider {
+  GITHUB
+  GITLAB
+  BITBUCKET
+  AZURE_DEVOPS
+}
+
+enum ProvenanceClassification {
+  DECLARED
+  OBSERVED
+  INFERRED
+  UNKNOWN
+}
+
+enum ProvenanceVerificationStatus {
+  VERIFIED
+  UNVERIFIED
+  FAILED
+  NOT_APPLICABLE
+}
+
 model Organization {
-  id          String              @id @default(cuid())
-  name        String
-  slug        String              @unique
-  ssoEnforced Boolean             @default(false)
-  webhookRetentionDays Int?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  members     OrganizationMember[]
-  installations GitHubInstallation[]
-  repositories Repository[]
-  pullRequests PullRequest[]
-  commits     Commit[]
-  aiActivities AIActivity[]
-  codeChanges CodeChange[]
-  findings    SecurityFinding[]
-  riskAssessments RiskAssessment[]
-  policies    Policy[]
-  policyRules PolicyRule[]
-  policyDecisions PolicyDecision[]
-  reviews     Review[]
-  evidence    Evidence[]
-  passports   ChangePassport[]
-  auditEvents AuditEvent[]
-  webhookEvents GitHubWebhookEvent[]
-  domains     OrganizationDomain[]
-  environments OrganizationEnvironmentConfig[]
-  identityProviders IdentityProvider[]
-  scimTokens  ScimBearerToken[]
-  serviceAccounts ServiceAccount[]
-  apiKeys     ApiKey[]
-  aiProviders AIProvider[]
-  aiAgents    AIAgent[]
-  aiModels    AIModel[]
-  sbomComponents SBOMComponent[]
-  riskAcceptances RiskAcceptance[]
-  observabilityEvents ObservabilityEvent[]
+  id                       String                          @id @default(cuid())
+  name                     String
+  slug                     String                          @unique
+  ssoEnforced              Boolean                         @default(false)
+  webhookRetentionDays     Int?
+  policyApprovalQuorum     Int                             @default(2)
+  createdAt                DateTime                        @default(now())
+  updatedAt                DateTime                        @updatedAt
+  members                  OrganizationMember[]
+  installations            GitHubInstallation[]
+  sourceControlConnections SourceControlConnection[]
+  repositories             Repository[]
+  pullRequests             PullRequest[]
+  commits                  Commit[]
+  aiActivities             AIActivity[]
+  provenanceSignals        ProvenanceSignal[]
+  codeChanges              CodeChange[]
+  findings                 SecurityFinding[]
+  riskAssessments          RiskAssessment[]
+  policies                 Policy[]
+  policyApprovals          PolicyApproval[]
+  policyRevisions          PolicyRevision[]
+  policyRules              PolicyRule[]
+  policyDecisions          PolicyDecision[]
+  reviews                  Review[]
+  evidence                 Evidence[]
+  passports                ChangePassport[]
+  passportRevisions        ChangePassportRevision[]
+  auditEvents              AuditEvent[]
+  webhookEvents            GitHubWebhookEvent[]
+  domains                  OrganizationDomain[]
+  environments             OrganizationEnvironmentConfig[]
+  identityProviders        IdentityProvider[]
+  federatedIdentities     FederatedIdentity[]
+  scimTokens               ScimBearerToken[]
+  serviceAccounts          ServiceAccount[]
+  apiKeys                  ApiKey[]
+  aiProviders              AIProvider[]
+  aiAgents                 AIAgent[]
+  aiModels                 AIModel[]
+  sbomComponents           SBOMComponent[]
+  riskAcceptances          RiskAcceptance[]
+  observabilityEvents      ObservabilityEvent[]
+  assessments              Assessment[]
+  billingSubscription      BillingSubscription?
+  billingWebhookEvents     BillingWebhookEvent[]
+  usageRecords             UsageRecord[]
+  deletionRequests         OrganizationDeletionRequest[]
+  invitations              OrganizationInvitation[]
+  scimGroups               ScimGroup[]
+  findingActivities        FindingActivity[]
+  notifications            Notification[]
+  notificationPreferences  NotificationPreference[]
+  resolutionEvidence       FindingResolutionEvidence[]
 }
 
 model User {
-  id            String              @id @default(cuid())
-  email         String              @unique
-  name          String?
-  avatarUrl     String?
-  githubUserId  String?             @unique
-  username      String?
-  active        Boolean             @default(true)
-  externalId    String?             // SCIM / IdP subject identifier
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  memberships   OrganizationMember[]
-  reviews       Review[]
-  auditEvents   AuditEvent[]
-  sessions      Session[]
+  id                      String                        @id @default(cuid())
+  email                   String                        @unique
+  name                    String?
+  avatarUrl               String?
+  githubUserId            String?                       @unique
+  username                String?
+  active                  Boolean                       @default(true)
+  externalId              String? // SCIM / IdP subject identifier
+  createdAt               DateTime                      @default(now())
+  updatedAt               DateTime                      @updatedAt
+  memberships             OrganizationMember[]
+  reviews                 Review[]
+  policyApprovals         PolicyApproval[]
+  auditEvents             AuditEvent[]
+  sessions                Session[]
+  assessments             Assessment[]                  @relation("AssessmentCreator")
+  deletionRequests        OrganizationDeletionRequest[]
+  createdInvitations      OrganizationInvitation[]        @relation("InvitationCreator")
+  acceptedInvitations     OrganizationInvitation[]        @relation("InvitationAcceptor")
+  assignedFindings        SecurityFinding[]             @relation("FindingAssignee")
+  findingActivities       FindingActivity[]
+  notifications           Notification[]
+  notificationPreferences NotificationPreference[]
+  federatedIdentities     FederatedIdentity[]
 }
 
 model OrganizationMember {
-  id             String          @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
   userId         String
   role           OrganizationRole @default(VIEWER)
-  externalId     String?         // SCIM external identifier (idempotent provisioning)
-  scimActive     Boolean         @default(true)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  externalId     String? // SCIM external identifier (idempotent provisioning)
+  scimActive     Boolean          @default(true)
+  scimManagedRole Boolean         @default(false)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  scimGroups     ScimGroupMember[]
 
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, userId])
   @@unique([organizationId, externalId])
@@ -174,35 +305,35 @@ model OrganizationMember {
 }
 
 model ServiceAccount {
-  id          String    @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
-  name        String
-  description String?
-  role        OrganizationRole @default(VIEWER)
-  active      Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  name           String
+  description    String?
+  role           OrganizationRole @default(VIEWER)
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  apiKeys     ApiKey[]
+  apiKeys      ApiKey[]
 
   @@unique([organizationId, name])
   @@index([organizationId, active])
 }
 
 model ApiKey {
-  id             String    @id @default(cuid())
-  organizationId String
+  id               String    @id @default(cuid())
+  organizationId   String
   serviceAccountId String?
-  name           String
-  keyHash        String    @unique
-  revokedAt      DateTime?
-  expiresAt      DateTime?
-  lastUsedAt     DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  name             String
+  keyHash          String    @unique
+  revokedAt        DateTime?
+  expiresAt        DateTime?
+  lastUsedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   serviceAccount ServiceAccount? @relation(fields: [serviceAccountId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, serviceAccountId])
@@ -210,98 +341,254 @@ model ApiKey {
 }
 
 model GitHubInstallation {
-  id                String      @id @default(cuid())
-  organizationId    String
-  githubInstallationId String      @unique
-  appId             String?
-  accountLogin      String?
-  accountType       String?
-  permissions       Json?
-  webhookSecret     String?
-  active            Boolean     @default(true)
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
+  id                   String   @id @default(cuid())
+  organizationId       String
+  githubInstallationId String   @unique
+  appId                String?
+  accountLogin         String?
+  accountType          String?
+  permissions          Json?
+  webhookSecret        String?
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  repositories      Repository[]
-  webhookEvents     GitHubWebhookEvent[]
+  organization  Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repositories  Repository[]
+  webhookEvents GitHubWebhookEvent[]
 }
 
 model GitHubWebhookEvent {
   id             String    @id @default(cuid())
-  organizationId  String?
-  installationId  String?
-  repositoryId    String?
-  provider        String    @default("GITHUB")
-  eventType       String
-  deliveryId      String
-  payloadHash     String
-  payload         Json
-  status          String    @default("RECEIVED")
-  createdAt       DateTime  @default(now())
-  processedAt     DateTime?
+  organizationId String?
+  installationId String?
+  repositoryId   String?
+  provider       String    @default("GITHUB")
+  eventType      String
+  deliveryId     String
+  payloadHash    String
+  payload        Json
+  status         String    @default("RECEIVED")
+  createdAt      DateTime  @default(now())
+  processedAt    DateTime?
 
-  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  installation    GitHubInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
-  repository      Repository? @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  organization Organization?       @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  installation GitHubInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
+  repository   Repository?         @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
 
   @@unique([provider, deliveryId])
   @@index([provider, eventType, createdAt])
 }
 
-model Repository {
-  id                String       @id @default(cuid())
-  organizationId    String
-  githubInstallationId String?
-  provider          String       @default("GITHUB")
-  externalId        String?
-  owner             String
-  name              String
-  defaultBranch     String?
-  enabled           Boolean      @default(true)
-  criticality       String       @default("MEDIUM")
-  metadata          Json?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+model SourceControlConnection {
+  id                      String                @id @default(cuid())
+  organizationId          String
+  provider                SourceControlProvider
+  externalAccountId       String
+  accountName             String
+  credentialCiphertext    String
+  scopes                  String[]              @default([])
+  capabilities            Json?
+  webhookSecretHash       String?
+  webhookSecretCiphertext String?
+  active                  Boolean               @default(true)
+  lastCheckedAt           DateTime?
+  revokedAt               DateTime?
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
 
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  installation      GitHubInstallation? @relation(fields: [githubInstallationId], references: [id])
-  pullRequests      PullRequest[]
-  commits           Commit[]
-  findings          SecurityFinding[]
-  evidence          Evidence[]
-  webhookEvents     GitHubWebhookEvent[]
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repositories Repository[]
+
+  @@unique([organizationId, provider, externalAccountId])
+  @@index([organizationId, provider, active])
+}
+
+model Repository {
+  id                        String   @id @default(cuid())
+  organizationId            String
+  githubInstallationId      String?
+  sourceControlConnectionId String?
+  provider                  String   @default("GITHUB")
+  externalId                String?
+  owner                     String
+  name                      String
+  defaultBranch             String?
+  enabled                   Boolean  @default(true)
+  criticality               String   @default("MEDIUM")
+  metadata                  Json?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  organization            Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  installation            GitHubInstallation?      @relation(fields: [githubInstallationId], references: [id])
+  sourceControlConnection SourceControlConnection? @relation(fields: [sourceControlConnectionId], references: [id], onDelete: SetNull)
+  pullRequests            PullRequest[]
+  commits                 Commit[]
+  findings                SecurityFinding[]
+  evidence                Evidence[]
+  provenanceSignals       ProvenanceSignal[]
+  webhookEvents           GitHubWebhookEvent[]
+  assessments             AssessmentRepository[]
 
   @@unique([organizationId, provider, owner, name])
   @@index([organizationId, enabled])
+  @@index([sourceControlConnectionId])
+}
+
+model Assessment {
+  id                    String           @id @default(cuid())
+  organizationId        String
+  createdById           String
+  status                AssessmentStatus @default(CREATED)
+  windowStart           DateTime
+  windowEnd             DateTime
+  progress              Int              @default(0)
+  totalPullRequests     Int              @default(0)
+  processedPullRequests Int              @default(0)
+  report                Json?
+  errorCode             String?
+  errorMessage          String?
+  attempt               Int              @default(0)
+  idempotencyKey        String?
+  permissionsSnapshot   Json?
+  queuedAt              DateTime?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  cancelledAt           DateTime?
+  expiresAt             DateTime
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User                   @relation("AssessmentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  repositories AssessmentRepository[]
+
+  @@unique([organizationId, createdById, idempotencyKey])
+  @@index([organizationId, createdAt])
+  @@index([status, queuedAt])
+}
+
+model AssessmentRepository {
+  assessmentId String
+  repositoryId String
+  createdAt    DateTime @default(now())
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@id([assessmentId, repositoryId])
+  @@index([repositoryId])
+}
+
+model BillingSubscription {
+  id                     String                    @id @default(cuid())
+  organizationId         String                    @unique
+  plan                   CommercialPlan            @default(FREE_ASSESSMENT)
+  status                 BillingSubscriptionStatus @default(INACTIVE)
+  provider               BillingProvider?
+  providerCustomerId     String?                   @unique
+  providerSubscriptionId String?                   @unique
+  providerPriceId        String?
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  cancelAtPeriodEnd      Boolean                   @default(false)
+  latestInvoiceStatus    String?
+  agreementName          String?
+  entitlements           Json?
+  metadata               Json?
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices     BillingInvoice[]
+
+  @@index([plan, status])
+  @@index([providerSubscriptionId])
+}
+
+model BillingInvoice {
+  id                String    @id @default(cuid())
+  subscriptionId    String
+  providerInvoiceId String    @unique
+  status            String
+  amountDue         Int?
+  amountPaid        Int?
+  currency          String?
+  hostedInvoiceUrl  String?
+  periodStart       DateTime?
+  periodEnd         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  subscription BillingSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, createdAt])
+  @@index([status])
+}
+
+model BillingWebhookEvent {
+  id              String    @id @default(cuid())
+  organizationId  String?
+  providerEventId String    @unique
+  eventType       String
+  status          String    @default("RECEIVED")
+  attempts        Int       @default(0)
+  lastError       String?
+  processedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model UsageRecord {
+  id             String            @id @default(cuid())
+  organizationId String
+  type           BillableUsageType
+  quantity       Int               @default(1)
+  idempotencyKey String
+  periodStart    DateTime
+  periodEnd      DateTime
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, type, createdAt])
 }
 
 model PullRequest {
-  id                String        @id @default(cuid())
+  id                String    @id @default(cuid())
   organizationId    String
   repositoryId      String
-  provider          String        @default("GITHUB")
+  provider          String    @default("GITHUB")
   externalId        String?
   number            Int
   title             String
-  state             String        @default("OPEN")
+  state             String    @default("OPEN")
   authorLogin       String?
   sourceBranch      String?
   targetBranch      String?
   headSha           String?
-  additions         Int           @default(0)
-  deletions         Int           @default(0)
-  changedFilesCount Int           @default(0)
+  additions         Int       @default(0)
+  deletions         Int       @default(0)
+  changedFilesCount Int       @default(0)
   githubCheckRunId  String?
   lastAnalyzedSha   String?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
   mergedAt          DateTime?
 
-  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  repository        Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repository        Repository         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   commits           Commit[]
   aiActivities      AIActivity[]
+  provenanceSignals ProvenanceSignal[]
   codeChanges       CodeChange[]
   findings          SecurityFinding[]
   riskAssessments   RiskAssessment[]
@@ -315,156 +602,294 @@ model PullRequest {
 }
 
 model Commit {
-  id              String     @id @default(cuid())
-  organizationId  String
-  repositoryId    String
-  pullRequestId   String?
-  sha             String
-  message         String
-  authorName      String?
-  authorEmail     String?
-  committedAt     DateTime?
-  createdAt       DateTime   @default(now())
+  id             String    @id @default(cuid())
+  organizationId String
+  repositoryId   String
+  pullRequestId  String?
+  sha            String
+  message        String
+  authorName     String?
+  authorEmail    String?
+  committedAt    DateTime?
+  createdAt      DateTime  @default(now())
 
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  repository      Repository   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  pullRequest     PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repository   Repository   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  pullRequest  PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
 
   @@unique([repositoryId, sha])
   @@index([organizationId, committedAt])
 }
 
 model AIProvider {
-  id             String            @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
   name           String
-  status         AIApprovalStatus  @default(UNREVIEWED)
+  status         AIApprovalStatus @default(UNREVIEWED)
   website        String?
   description    String?
   metadata       Json?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  agents         AIAgent[]
-  models         AIModel[]
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agents       AIAgent[]
+  models       AIModel[]
 
   @@unique([organizationId, name])
   @@index([organizationId, status])
 }
 
 model AIAgent {
-  id             String            @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
   providerId     String
   name           String
-  status         AIApprovalStatus  @default(UNREVIEWED)
+  status         AIApprovalStatus @default(UNREVIEWED)
   description    String?
   metadata       Json?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  provider       AIProvider        @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider     AIProvider   @relation(fields: [providerId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, providerId, name])
   @@index([organizationId, status])
 }
 
 model AIModel {
-  id             String            @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
   providerId     String
   name           String
   version        String?
-  status         AIApprovalStatus  @default(UNREVIEWED)
+  status         AIApprovalStatus @default(UNREVIEWED)
   description    String?
   metadata       Json?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  provider       AIProvider        @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider     AIProvider   @relation(fields: [providerId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, providerId, name])
   @@index([organizationId, status])
 }
 
 model AIActivity {
-  id             String            @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
   repositoryId   String?
   pullRequestId  String?
   agent          String
   model          String?
-  involvement    AIInvolvement     @default(UNKNOWN)
-  confidence     Float             @default(0)
-  source         ProvenanceSource  @default(UNKNOWN)
+  involvement    AIInvolvement    @default(UNKNOWN)
+  confidence     Float            @default(0)
+  source         ProvenanceSource @default(UNKNOWN)
   metadata       Json?
-  createdAt      DateTime          @default(now())
+  createdAt      DateTime         @default(now())
 
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  pullRequest    PullRequest?      @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest  PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, involvement, confidence])
 }
 
+model ProvenanceSignal {
+  id                 String                       @id @default(cuid())
+  organizationId     String
+  repositoryId       String?
+  pullRequestId      String?
+  headSha            String?
+  provider           String?
+  signalSource       String
+  sourceType         String
+  signalType         String
+  classification     ProvenanceClassification
+  verificationStatus ProvenanceVerificationStatus @default(UNVERIFIED)
+  evidenceReference  String?
+  evidenceAt         DateTime?
+  confidence         Float?
+  limitations        String?
+  signalKey          String
+  metadata           Json?
+  createdAt          DateTime                     @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repository   Repository?  @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  pullRequest  PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, signalKey])
+  @@index([organizationId, classification, evidenceAt])
+  @@index([organizationId, repositoryId, pullRequestId])
+  @@index([pullRequestId, headSha])
+}
+
 model CodeChange {
-  id             String      @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   pullRequestId  String
   filePath       String
-  sensitiveAreas String[]   @default([])
-  additions      Int         @default(0)
-  deletions      Int         @default(0)
-  status         String      @default("PENDING")
-  createdAt      DateTime    @default(now())
+  sensitiveAreas String[] @default([])
+  additions      Int      @default(0)
+  deletions      Int      @default(0)
+  status         String   @default("PENDING")
+  createdAt      DateTime @default(now())
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  pullRequest    PullRequest  @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest  PullRequest  @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, pullRequestId])
 }
 
 model SecurityFinding {
-  id                 String       @id @default(cuid())
-  organizationId     String
-  repositoryId       String?
-  pullRequestId      String?
-  provider           String
-  providerFindingId  String?
-  category           String?
-  severity           String       @default("MEDIUM")
-  title              String
-  description        String?
-  file               String?
-  line               Int?
-  ruleId             String?
-  status             String       @default("OPEN")
-  metadata           Json?
-  createdAt          DateTime     @default(now())
+  id                     String    @id @default(cuid())
+  organizationId         String
+  repositoryId           String?
+  pullRequestId          String?
+  assigneeId             String?
+  provider               String
+  providerFindingId      String?
+  category               String?
+  severity               String    @default("MEDIUM")
+  title                  String
+  description            String?
+  file                   String?
+  line                   Int?
+  ruleId                 String?
+  status                 String    @default("OPEN")
+  resolutionVerification String    @default("NOT_VERIFIED")
+  dueAt                  DateTime?
+  resolvedAt             DateTime?
+  metadata               Json?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
-  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  repository         Repository?  @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
-  pullRequest        PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
-  riskAcceptances    RiskAcceptance[]
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repository      Repository?       @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  pullRequest     PullRequest?      @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  assignee        User?             @relation("FindingAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  activities      FindingActivity[]
+  riskAcceptances RiskAcceptance[]
+  resolutionEvidence FindingResolutionEvidence[]
 
   @@index([organizationId, severity])
+  @@index([organizationId, status, dueAt])
+  @@index([organizationId, assigneeId, status])
+}
+
+model FindingResolutionEvidence {
+  id                String   @id @default(cuid())
+  organizationId    String
+  securityFindingId String?
+  provider          String
+  providerFindingId String
+  providerState     String
+  commitSha         String?
+  externalRef       String?
+  observedAt        DateTime @default(now())
+  metadata          Json?
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  securityFinding SecurityFinding? @relation(fields: [securityFindingId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, provider, providerFindingId, observedAt])
+  @@index([securityFindingId, observedAt])
+}
+
+model FindingActivity {
+  id             String   @id @default(cuid())
+  organizationId String
+  findingId      String
+  actorId        String?
+  type           String
+  fromStatus     String?
+  toStatus       String?
+  comment        String?
+  createdAt      DateTime @default(now())
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  finding      SecurityFinding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  actor        User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, findingId, createdAt])
+}
+
+model Notification {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String
+  invitationId   String?
+  type           String
+  title          String
+  body           String
+  href           String?
+  dedupeKey      String?
+  readAt         DateTime?
+  emailStatus    String    @default("PENDING")
+  createdAt      DateTime  @default(now())
+
+  organization     Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitation       OrganizationInvitation?       @relation(fields: [invitationId], references: [id], onDelete: SetNull)
+  deliveryAttempts NotificationDeliveryAttempt[]
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt, createdAt])
+  @@index([organizationId, type, createdAt])
+  @@index([invitationId])
+}
+
+model NotificationDeliveryAttempt {
+  id                String    @id @default(cuid())
+  notificationId    String
+  attempt           Int
+  status            String
+  attemptedAt       DateTime  @default(now())
+  completedAt       DateTime?
+  latencyMs         Int?
+  providerMessageId String?
+  errorCode         String?
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, attempt])
+  @@index([notificationId, attemptedAt])
+  @@index([status, attemptedAt])
+}
+
+model NotificationPreference {
+  id                       String   @id @default(cuid())
+  organizationId           String
+  userId                   String
+  emailEnabled             Boolean  @default(true)
+  securityEmailEnabled     Boolean  @default(true)
+  assessmentsEmailEnabled  Boolean  @default(true)
+  governanceEmailEnabled   Boolean  @default(true)
+  integrationsEmailEnabled Boolean  @default(true)
+  accountEmailEnabled      Boolean  @default(true)
+  updatedAt                DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
 }
 
 model SBOMComponent {
-  id             String             @id @default(cuid())
+  id             String              @id @default(cuid())
   organizationId String
   name           String
   version        String?
-  ecosystem      String             @default("NPM")
+  ecosystem      String              @default("NPM")
   status         SBOMComponentStatus @default(ACTIVE)
   source         String?
   metadata       Json?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
-  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   riskAcceptances RiskAcceptance[]
 
   @@unique([organizationId, ecosystem, name, version])
@@ -472,59 +897,95 @@ model SBOMComponent {
 }
 
 model RiskAcceptance {
-  id             String      @id @default(cuid())
-  organizationId String
-  findingId      String?
-  componentId    String?
-  acceptedBy     String?
-  reason         String?
-  status         String      @default("ACCEPTED")
-  expiresAt      DateTime?
-  approvedAt     DateTime?   @default(now())
-  createdAt      DateTime    @default(now())
+  id                      String    @id @default(cuid())
+  organizationId          String
+  findingId               String?
+  componentId             String?
+  acceptedBy              String?
+  reason                  String?
+  status                  String    @default("ACCEPTED")
+  expiresAt               DateTime?
+  expiredNotifiedAt       DateTime?
+  expiryWarningNotifiedAt DateTime?
+  approvedAt              DateTime? @default(now())
+  createdAt               DateTime  @default(now())
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  finding        SecurityFinding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
-  component      SBOMComponent? @relation(fields: [componentId], references: [id], onDelete: SetNull)
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  finding      SecurityFinding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  component    SBOMComponent?   @relation(fields: [componentId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status])
 }
 
 model RiskAssessment {
-  id             String      @id @default(cuid())
+  id             String    @id @default(cuid())
   organizationId String
   pullRequestId  String?
   score          Float
   level          RiskLevel
-  modelVersion   String      @default("risk-v1")
+  modelVersion   String    @default("risk-v1")
   factors        Json?
   explanation    String?
-  createdAt      DateTime    @default(now())
+  createdAt      DateTime  @default(now())
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  pullRequest    PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest  PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, level])
 }
 
 model Policy {
-  id             String       @id @default(cuid())
+  id             String     @id @default(cuid())
   organizationId String
   name           String
   description    String?
-  enabled        Boolean      @default(true)
-  mode           PolicyMode   @default(DRY_RUN)
-  version        String       @default("v1")
+  enabled        Boolean    @default(true)
+  mode           PolicyMode @default(DRY_RUN)
+  version        String     @default("v1")
   metadata       Json?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  policyRules    PolicyRule[]
-  decisions      PolicyDecision[]
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  policyRules  PolicyRule[]
+  decisions    PolicyDecision[]
+  revisions    PolicyRevision[]
+  approvals    PolicyApproval[]
 
   @@index([organizationId, enabled])
   @@index([organizationId, mode])
+}
+
+model PolicyRevision {
+  id             String   @id @default(cuid())
+  organizationId String
+  policyId       String?
+  version        String
+  actorId        String?
+  snapshot       Json
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  policy       Policy?      @relation(fields: [policyId], references: [id], onDelete: SetNull)
+
+  @@unique([policyId, version])
+  @@index([organizationId, createdAt])
+}
+
+model PolicyApproval {
+  id             String   @id @default(cuid())
+  organizationId String
+  policyId       String
+  version        String
+  actorId        String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  policy       Policy       @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  actor        User         @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, version, actorId])
+  @@index([organizationId, policyId, version])
 }
 
 model PolicyRule {
@@ -533,6 +994,7 @@ model PolicyRule {
   policyId                String
   name                    String
   aiInvolved              Boolean?
+  conditionExpression     Json?
   sensitiveAreas          String[]     @default([])
   riskAtLeast             Int?
   repositoryCriticalityIn String[]     @default([])
@@ -550,101 +1012,160 @@ model PolicyRule {
 }
 
 model PolicyDecision {
-  id                 String       @id @default(cuid())
-  organizationId     String
-  pullRequestId      String?
-  policyId           String?
-  action             PolicyAction
-  matchedRuleIds     String[]     @default([])
-  requiredApprovals  String[]     @default([])
-  explanation        String?
-  createdAt          DateTime     @default(now())
+  id                String       @id @default(cuid())
+  organizationId    String
+  pullRequestId     String?
+  policyId          String?
+  action            PolicyAction
+  matchedRuleIds    String[]     @default([])
+  requiredApprovals String[]     @default([])
+  explanation       String?
+  createdAt         DateTime     @default(now())
 
-  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  policy             Policy?      @relation(fields: [policyId], references: [id], onDelete: SetNull)
-  pullRequest        PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  policy       Policy?      @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  pullRequest  PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, action])
 }
 
 model Review {
-  id             String         @id @default(cuid())
-  organizationId String
-  pullRequestId  String?
-  reviewerId     String?
-  decision       ReviewDecision
-  status         String         @default("PENDING")
-  comment        String?
-  createdAt      DateTime       @default(now())
+  id              String            @id @default(cuid())
+  organizationId  String
+  pullRequestId   String?
+  reviewerId      String?
+  decision        ReviewDecision?
+  status          String            @default("PENDING")
+  comment         String?
+  reviewedHeadSha String?
+  requirement     String            @default("")
+  reviewerRole    OrganizationRole?
+  createdAt       DateTime          @default(now())
+  completedAt     DateTime?
 
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  pullRequest    PullRequest?   @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
-  reviewer       User?          @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest  PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  reviewer     User?        @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
 
+  @@unique([pullRequestId, reviewerId, reviewedHeadSha, requirement])
   @@index([organizationId, status])
+  @@index([pullRequestId, reviewedHeadSha, status])
+  @@index([organizationId, completedAt])
 }
 
 model Evidence {
-  id             String          @id @default(cuid())
+  id             String         @id @default(cuid())
   organizationId String
   pullRequestId  String?
   repositoryId   String?
+  headSha        String?
   type           String
   status         EvidenceStatus
   source         String
   details        String?
   metadata       Json?
   externalRef    String?
-  createdAt      DateTime        @default(now())
+  createdAt      DateTime       @default(now())
 
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  pullRequest    PullRequest?    @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
-  repository     Repository?     @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest  PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  repository   Repository?  @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, type, status])
+  @@index([pullRequestId, headSha])
+}
+
+model ScimGroup {
+  id             String   @id @default(cuid())
+  organizationId String
+  externalId     String
+  displayName    String
+  role           OrganizationRole @default(VIEWER)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members      ScimGroupMember[]
+
+  @@unique([organizationId, externalId])
+  @@index([organizationId, displayName])
+}
+
+model ScimGroupMember {
+  id        String   @id @default(cuid())
+  groupId   String
+  memberId  String
+  createdAt DateTime @default(now())
+
+  group  ScimGroup          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  member OrganizationMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, memberId])
+  @@index([memberId])
 }
 
 model ChangePassport {
-  id             String      @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   pullRequestId  String?
-  status         String      @default("DRAFT")
+  status         String   @default("DRAFT")
   summary        String?
   payload        Json
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  pullRequest    PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pullRequest  PullRequest?             @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  revisions    ChangePassportRevision[]
 
   @@index([organizationId, status])
   @@index([pullRequestId])
 }
 
+model ChangePassportRevision {
+  id               String   @id @default(cuid())
+  organizationId   String
+  passportId       String
+  schemaVersion    Int      @default(1)
+  revision         Int
+  payload          Json
+  evidenceSnapshot Json?
+  previousHash     String?
+  contentHash      String
+  createdAt        DateTime @default(now())
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  passport     ChangePassport @relation(fields: [passportId], references: [id], onDelete: Cascade)
+
+  @@unique([passportId, revision])
+  @@index([organizationId, passportId, revision])
+}
+
 model AuditEvent {
-  id             String       @id @default(cuid())
+  id             String        @id @default(cuid())
   organizationId String?
   actorId        String?
   eventType      String
   metadata       Json?
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime      @default(now())
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  actor          User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actor          User?         @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
   @@index([organizationId, eventType, createdAt])
 }
 
 model ObservabilityEvent {
-  id             String       @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String?
   service        String?
-  level          String       @default("INFO")
+  level          String   @default("INFO")
   message        String
   requestId      String?
   correlationId  String?
   metadata       Json?
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime @default(now())
 
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, createdAt])
   @@index([requestId])
@@ -661,36 +1182,88 @@ model SystemHealth {
 
 // Milestone A — server-side sessions with revocation support
 model Session {
-  id         String    @id @default(cuid())
-  userId     String
-  tokenHash  String    @unique
-  expiresAt  DateTime
-  revokedAt  DateTime?
-  ipAddress  String?
-  userAgent  String?
-  createdAt  DateTime  @default(now())
+  id                    String           @id @default(cuid())
+  userId                String
+  tokenHash             String           @unique
+  expiresAt             DateTime
+  revokedAt             DateTime?
+  ipAddress             String?
+  userAgent             String?
+  authenticationMethod  String           @default("GITHUB")
+  identityProviderId    String?
+  createdAt             DateTime         @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identityProvider IdentityProvider? @relation(fields: [identityProviderId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
+  @@index([identityProviderId])
 }
 
 // Milestone A — enterprise SSO (OIDC / SAML) configuration per organization
 model IdentityProvider {
-  id             String               @id @default(cuid())
-  organizationId String
-  type           IdentityProviderType
-  name           String
-  enabled        Boolean              @default(false)
-  issuer         String?
-  clientId       String?
-  metadata       Json?
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
+  id                    String               @id @default(cuid())
+  organizationId       String
+  type                 IdentityProviderType
+  name                 String
+  enabled              Boolean              @default(false)
+  ssoTestedAt          DateTime?
+  issuer               String?
+  clientId             String?
+  clientSecretEncrypted String?
+  metadata             Json?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sessions     Session[]
+  identities   FederatedIdentity[]
+  transactions SsoTransaction[]
 
   @@index([organizationId, enabled])
+}
+
+model FederatedIdentity {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  identityProviderId String
+  userId             String
+  subject            String
+  email              String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  identityProvider IdentityProvider @relation(fields: [identityProviderId], references: [id], onDelete: Cascade)
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([identityProviderId, subject])
+  @@index([organizationId, userId])
+}
+
+model SsoTransaction {
+  id                 String               @id @default(cuid())
+  stateHash          String               @unique
+  identityProviderId String
+  organizationId     String
+  codeVerifier       String?
+  nonce              String?
+  redirectTo         String
+  expiresAt          DateTime
+  createdAt          DateTime             @default(now())
+
+  identityProvider IdentityProvider @relation(fields: [identityProviderId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model SamlRequestCache {
+  requestId String   @id
+  value     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 // Milestone A — SCIM 2.0 bearer tokens (hashed at rest)

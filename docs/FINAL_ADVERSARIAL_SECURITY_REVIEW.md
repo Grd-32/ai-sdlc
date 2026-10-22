@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document defines the final security review gate for the AI-SDLC control plane before broader enterprise rollout. It is intentionally adversarial: the goal is to test the product as an attacker, a malicious insider, or a compromised tenant would see it.
+This document defines the final security review gate for Nomalog before broader enterprise rollout. It is intentionally adversarial: the goal is to test the product as an attacker, a malicious insider, or a compromised tenant would see it.
 
 ## Review objectives
 

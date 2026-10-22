@@ -17,14 +17,9 @@ export type PolicyActionLike = "ALLOW" | "REVIEW" | "BLOCK";
 export type RiskLevelLike = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 export type CheckRunConclusion =
-  | "success"
-  | "failure"
-  | "neutral"
-  | "action_required"
-  | "cancelled"
-  | "timed_out";
+  "success" | "failure" | "neutral" | "action_required" | "cancelled" | "timed_out";
 
-const CHECK_RUN_NAME = "AI-SDLC Security";
+const CHECK_RUN_NAME = "Nomalog Security";
 
 /** Deterministic mapping — never let an LLM decide the Check Run conclusion (README §35/§70). */
 export function mapPolicyActionToCheckRunConclusion(action: PolicyActionLike): CheckRunConclusion {
@@ -72,6 +67,7 @@ export function buildCheckRunSummary(input: CheckRunSummaryInput): string {
     `**Risk:** ${input.riskLevel} (score ${input.riskScore.toFixed(0)})`,
     `**Sensitive areas:** ${input.sensitiveAreas.length > 0 ? input.sensitiveAreas.join(", ") : "None detected"}`,
     `**Policy:** ${input.policyAction}`,
+    "**Merge enforcement:** GitHub only uses this result as a merge gate when repository rules require this check; bypass settings may still apply.",
   ];
 
   if (input.requiredApprovals.length > 0) {
@@ -104,7 +100,9 @@ export interface PublishCheckRunResult {
   conclusion: CheckRunConclusion;
 }
 
-export async function publishCheckRun(params: PublishCheckRunParams): Promise<PublishCheckRunResult> {
+export async function publishCheckRun(
+  params: PublishCheckRunParams,
+): Promise<PublishCheckRunResult> {
   const conclusion = mapPolicyActionToCheckRunConclusion(params.summaryInput.policyAction);
 
   const body = {

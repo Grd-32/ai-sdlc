@@ -296,24 +296,50 @@
  * queue and the worker, is real.
  */
 
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Worker as BullWorker, type Job } from "bullmq";
 import { Redis } from "ioredis";
 
 process.env["DATABASE_URL"] =
-  process.env["DATABASE_URL"] ?? "postgresql://ai_sdlc:ai_sdlc_dev@localhost:5432/ai_sdlc?schema=public";
+  process.env["DATABASE_URL"] ??
+  "postgresql://ai_sdlc:ai_sdlc_dev@localhost:5432/ai_sdlc?schema=public";
 process.env["REDIS_URL"] = process.env["REDIS_URL"] ?? "redis://localhost:6379";
+const testQueuePrefix = `golden-path-${Date.now().toString(36)}`;
+process.env["BULLMQ_PREFIX"] = testQueuePrefix;
 
-const publishCheckRunMock = vi.fn().mockResolvedValue({ checkRunId: "mock-check-run-1", conclusion: "failure" });
-const listPullRequestFilesMock = vi.fn().mockResolvedValue([
-  { filename: "src/auth/login.ts", status: "modified", additions: 12, deletions: 3, changes: 15 },
-]);
+const publishCheckRunMock = vi
+  .fn()
+  .mockResolvedValue({ checkRunId: "mock-check-run-1", conclusion: "failure" });
+const listPullRequestFilesMock = vi
+  .fn()
+  .mockResolvedValue([
+    { filename: "src/auth/login.ts", status: "modified", additions: 12, deletions: 3, changes: 15 },
+  ]);
+const listPullRequestCommitsMock = vi.fn().mockResolvedValue([]);
+const githubApiRequestMock = vi.fn().mockImplementation((_installationId: string, path: string) => {
+  const checkRunMatch = path.match(/\/commits\/([^/]+)\/check-runs/);
+  if (checkRunMatch) {
+    return Promise.resolve({
+      check_runs: [
+        {
+          name: "CodeQL",
+          head_sha: decodeURIComponent(checkRunMatch[1] ?? ""),
+          status: "completed",
+          conclusion: "success",
+        },
+      ],
+    });
+  }
+  return Promise.resolve([]);
+});
 
 vi.mock("@ai-sdlc/github", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@ai-sdlc/github")>();
   return {
     ...actual,
+    githubApiRequest: githubApiRequestMock,
     listPullRequestFiles: listPullRequestFilesMock,
+    listPullRequestCommits: listPullRequestCommitsMock,
     publishCheckRun: publishCheckRunMock,
   };
 });
@@ -329,6 +355,7 @@ const REPO_OWNER = "golden-path-test";
 const REPO_NAME = `repo-${runId}`;
 
 let organization: { id: string };
+const approvalUserIds: string[] = [];
 let connection: Redis;
 let worker: BullWorker;
 
@@ -351,7 +378,8 @@ function waitForJobOutcome(jobName: string, timeoutMs = 15000): Promise<void> {
     const check = (): void => {
       const index = jobOutcomes.findIndex((o) => o.name === jobName);
       if (index !== -1) {
-        const outcome = jobOutcomes.splice(index, 1)[0]!;
+        const outcome = jobOutcomes.splice(index, 1)[0];
+        if (!outcome) throw new Error(`Job "${jobName}" completed without an outcome.`);
         if (outcome.ok) {
           resolve();
         } else {
@@ -369,7 +397,11 @@ function waitForJobOutcome(jobName: string, timeoutMs = 15000): Promise<void> {
   });
 }
 
-function buildPullRequestPayload(overrides: { number: number; externalId: number; headSha: string }) {
+function buildPullRequestPayload(overrides: {
+  number: number;
+  externalId: number;
+  headSha: string;
+}) {
   return {
     action: "opened",
     installation: { id: Number(GITHUB_INSTALLATION_ID) },
@@ -404,6 +436,10 @@ beforeAll(async () => {
     data: { name: `Golden Path Test ${runId}`, slug: `golden-path-test-${runId}` },
   });
 
+  await prisma.billingSubscription.create({
+    data: { organizationId: organization.id, plan: "PROFESSIONAL", status: "ACTIVE" },
+  });
+
   await prisma.gitHubInstallation.create({
     data: {
       organizationId: organization.id,
@@ -414,15 +450,21 @@ beforeAll(async () => {
     },
   });
 
-  connection = new Redis(process.env["REDIS_URL"]!, { maxRetriesPerRequest: null });
-  worker = new BullWorker(QUEUE_NAMES.GITHUB, processJob, { connection, concurrency: 1 });
+  const redisUrl = process.env["REDIS_URL"];
+  if (!redisUrl) throw new Error("REDIS_URL is required for the worker golden-path test.");
+  connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
+  worker = new BullWorker(QUEUE_NAMES.GITHUB, processJob, {
+    connection,
+    concurrency: 1,
+    prefix: testQueuePrefix,
+  });
 
   worker.on("completed", (job: Job) => {
     jobOutcomes.push({ name: job.name, ok: true });
   });
   worker.on("failed", (job: Job | undefined, error: Error) => {
     jobOutcomes.push({ name: job?.name ?? "unknown", ok: false, error: error.message });
-    // eslint-disable-next-line no-console
+
     console.error(`[golden-path test] job "${job?.name}" failed:`, error);
   });
 
@@ -433,135 +475,366 @@ afterAll(async () => {
   await worker.close();
   await connection.quit();
   await prisma.organization.delete({ where: { id: organization.id } }).catch(() => undefined);
+  if (approvalUserIds.length > 0) {
+    await prisma.user.deleteMany({ where: { id: { in: approvalUserIds } } });
+  }
 }, 20000);
 
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
 describe("Golden path: webhook -> analysis -> policy -> passport -> Check Run", () => {
-  it(
-    "processes a PR end-to-end and produces a coherent, explainable decision",
-    async () => {
-      const headSha = `sha-${runId}-1`;
-      const payload = buildPullRequestPayload({ number: 1, externalId: 5000, headSha });
+  it("processes a PR end-to-end and produces a coherent, explainable decision", async () => {
+    const headSha = `sha-${runId}-1`;
+    const payload = buildPullRequestPayload({ number: 1, externalId: 5000, headSha });
 
-      const completion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
+    const completion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
 
-      await ingestGitHubWebhookDelivery(JSON.stringify(payload), {
-        "x-github-event": "pull_request",
-        "x-github-delivery": `delivery-${runId}-1`,
-      });
+    await ingestGitHubWebhookDelivery(JSON.stringify(payload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-1`,
+    });
 
-      await completion;
+    await completion;
 
-      const pullRequest = await prisma.pullRequest.findFirst({
-        where: { organizationId: organization.id, number: 1 },
-      });
-      expect(pullRequest).not.toBeNull();
-      expect(pullRequest?.lastAnalyzedSha).toBe(headSha);
-      expect(pullRequest?.githubCheckRunId).toBe("mock-check-run-1");
+    const pullRequest = await prisma.pullRequest.findFirstOrThrow({
+      where: { organizationId: organization.id, number: 1 },
+    });
+    expect(pullRequest.lastAnalyzedSha).toBe(headSha);
+    expect(pullRequest.githubCheckRunId).toBe("mock-check-run-1");
 
-      await prisma.aIActivity.updateMany({
-        where: { pullRequestId: pullRequest!.id },
-        data: { involvement: "YES", confidence: 0.95, agent: "claude-code" },
-      });
+    await prisma.aIActivity.updateMany({
+      where: { pullRequestId: pullRequest.id },
+      data: { involvement: "YES", confidence: 0.95, agent: "claude-code" },
+    });
 
-      const codeChange = await prisma.codeChange.findFirst({ where: { pullRequestId: pullRequest!.id } });
-      expect(codeChange?.sensitiveAreas).toContain("AUTHENTICATION");
+    const codeChange = await prisma.codeChange.findFirst({
+      where: { pullRequestId: pullRequest.id },
+    });
+    expect(codeChange?.sensitiveAreas).toContain("AUTHENTICATION");
 
-      const riskAssessment = await prisma.riskAssessment.findFirst({
-        where: { pullRequestId: pullRequest!.id },
-        orderBy: { createdAt: "desc" },
-      });
-      expect(riskAssessment).not.toBeNull();
+    const riskAssessment = await prisma.riskAssessment.findFirst({
+      where: { pullRequestId: pullRequest.id },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(riskAssessment).not.toBeNull();
 
-      const passport = await prisma.changePassport.findFirst({ where: { pullRequestId: pullRequest!.id } });
-      expect(passport).not.toBeNull();
+    const passport = await prisma.changePassport.findFirst({
+      where: { pullRequestId: pullRequest.id },
+    });
+    expect(passport).not.toBeNull();
 
-      expect(listPullRequestFilesMock).toHaveBeenCalled();
-      expect(publishCheckRunMock).toHaveBeenCalledWith(expect.objectContaining({ headSha }));
-    },
-    20000,
-  );
+    expect(listPullRequestFilesMock).toHaveBeenCalled();
+    expect(publishCheckRunMock).toHaveBeenCalledWith(expect.objectContaining({ headSha }));
+  }, 20000);
 
-  it(
-    "an org-defined DB policy rule genuinely changes the decision to BLOCK",
-    async () => {
-      const policy = await prisma.policy.create({
-        data: { organizationId: organization.id, name: "Auth Lockdown Test", enabled: true },
-      });
-      const rule = await prisma.policyRule.create({
-        data: {
-          organizationId: organization.id,
-          policyId: policy.id,
-          name: "Block all auth changes",
-          sensitiveAreas: ["AUTHENTICATION"],
-          action: "BLOCK",
-          reason: "Golden path test rule",
-        },
-      });
+  it("records Copilot provenance declared in a PR commit trailer", async () => {
+    const headSha = `sha-${runId}-copilot`;
+    listPullRequestCommitsMock.mockResolvedValueOnce([
+      {
+        sha: headSha,
+        commit: { message: "Refactor login flow\n\nAI-Assisted-By: GitHub Copilot" },
+      },
+    ]);
+    const payload = buildPullRequestPayload({ number: 6, externalId: 5006, headSha });
+    const completion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
 
-      const headSha = `sha-${runId}-2`;
-      const payload = buildPullRequestPayload({ number: 2, externalId: 5001, headSha });
+    await ingestGitHubWebhookDelivery(JSON.stringify(payload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-copilot`,
+    });
+    await completion;
 
-      const completion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
-      await ingestGitHubWebhookDelivery(JSON.stringify(payload), {
-        "x-github-event": "pull_request",
-        "x-github-delivery": `delivery-${runId}-2`,
-      });
-      await completion;
+    const pullRequest = await prisma.pullRequest.findFirst({
+      where: { organizationId: organization.id, number: 6 },
+    });
+    if (!pullRequest) {
+      throw new Error("Expected the Copilot commit-trailer pull request to be persisted.");
+    }
+    const activity = await prisma.aIActivity.findFirst({
+      where: { pullRequestId: pullRequest.id },
+      orderBy: { createdAt: "desc" },
+    });
 
-      const pullRequest = await prisma.pullRequest.findFirst({
-        where: { organizationId: organization.id, number: 2 },
-      });
-      const policyDecision = await prisma.policyDecision.findFirst({
-        where: { pullRequestId: pullRequest!.id },
-        orderBy: { createdAt: "desc" },
-      });
+    expect(activity).toMatchObject({
+      involvement: "YES",
+      agent: "GitHub Copilot",
+      source: "GIT_METADATA",
+      confidence: 0.98,
+    });
+  }, 20000);
 
-      expect(policyDecision?.action).toBe("BLOCK");
-      expect(policyDecision?.matchedRuleIds).toContain(rule.id);
-      expect(publishCheckRunMock).toHaveBeenCalledWith(
-        expect.objectContaining({ headSha, summaryInput: expect.objectContaining({ policyAction: "BLOCK" }) }),
-      );
-    },
-    20000,
-  );
+  it("reanalyzes an edited PR description with an explicit Copilot declaration", async () => {
+    const headSha = `sha-${runId}-edited`;
+    const originalPayload = buildPullRequestPayload({ number: 7, externalId: 5007, headSha });
+    const firstCompletion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
 
-  it(
-    "a genuine new push to the same PR is still analyzed (BullMQ dedup regression guard)",
-    async () => {
-      const firstSha = `sha-${runId}-3a`;
-      const secondSha = `sha-${runId}-3b`;
+    await ingestGitHubWebhookDelivery(JSON.stringify(originalPayload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-edited-open`,
+    });
+    await firstCompletion;
 
-      const firstPayload = buildPullRequestPayload({ number: 3, externalId: 5002, headSha: firstSha });
-      const firstCompletion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
-      await ingestGitHubWebhookDelivery(JSON.stringify(firstPayload), {
-        "x-github-event": "pull_request",
-        "x-github-delivery": `delivery-${runId}-3a`,
-      });
-      await firstCompletion;
+    const editedPayload = {
+      ...originalPayload,
+      action: "edited",
+      pull_request: {
+        ...originalPayload.pull_request,
+        body: "AI-Assisted-By: GitHub Copilot",
+      },
+    };
+    const editCompletion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
+    await ingestGitHubWebhookDelivery(JSON.stringify(editedPayload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-edited-body`,
+    });
+    await editCompletion;
 
-      const afterFirst = await prisma.pullRequest.findFirst({
-        where: { organizationId: organization.id, number: 3 },
-      });
-      expect(afterFirst?.lastAnalyzedSha).toBe(firstSha);
+    const pullRequest = await prisma.pullRequest.findFirst({
+      where: { organizationId: organization.id, number: 7 },
+    });
+    if (!pullRequest) {
+      throw new Error("Expected the edited Copilot pull request to be persisted.");
+    }
+    const activity = await prisma.aIActivity.findFirst({
+      where: { pullRequestId: pullRequest.id },
+      orderBy: { createdAt: "desc" },
+    });
 
-      const secondPayload = {
-        ...firstPayload,
-        action: "synchronize",
-        pull_request: { ...firstPayload.pull_request, head: { ref: "feature/login", sha: secondSha } },
-      };
+    expect(pullRequest.lastAnalyzedSha).toBe(headSha);
+    expect(activity).toMatchObject({
+      involvement: "YES",
+      agent: "GitHub Copilot",
+      source: "DEVELOPER_DECLARED",
+    });
+  }, 20000);
 
-      const secondCompletion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
-      await ingestGitHubWebhookDelivery(JSON.stringify(secondPayload), {
-        "x-github-event": "pull_request",
-        "x-github-delivery": `delivery-${runId}-3b`,
-      });
-      await secondCompletion;
+  it("an org-defined DB policy rule genuinely changes the decision to BLOCK", async () => {
+    const policy = await prisma.policy.create({
+      data: {
+        organizationId: organization.id,
+        name: "Auth Lockdown Test",
+        enabled: true,
+        mode: "ENFORCING",
+      },
+    });
+    const [author, approverOne, approverTwo] = await Promise.all(
+      ["author", "approver-one", "approver-two"].map((suffix) =>
+        prisma.user.create({
+          data: { email: `golden-policy-${suffix}-${runId}@example.test` },
+        }),
+      ),
+    );
+    if (!author || !approverOne || !approverTwo) {
+      throw new Error("Failed to create approval users for the policy golden path.");
+    }
+    approvalUserIds.push(author.id, approverOne.id, approverTwo.id);
+    await prisma.organizationMember.createMany({
+      data: [
+        { organizationId: organization.id, userId: author.id, role: "OWNER" },
+        { organizationId: organization.id, userId: approverOne.id, role: "ADMIN" },
+        { organizationId: organization.id, userId: approverTwo.id, role: "ADMIN" },
+      ],
+    });
+    await prisma.policyRevision.create({
+      data: {
+        organizationId: organization.id,
+        policyId: policy.id,
+        version: policy.version,
+        actorId: author.id,
+        snapshot: { mode: policy.mode },
+      },
+    });
+    await prisma.policyApproval.createMany({
+      data: [approverOne, approverTwo].map((approver) => ({
+        organizationId: organization.id,
+        policyId: policy.id,
+        version: policy.version,
+        actorId: approver.id,
+      })),
+    });
+    const rule = await prisma.policyRule.create({
+      data: {
+        organizationId: organization.id,
+        policyId: policy.id,
+        name: "Block all auth changes",
+        sensitiveAreas: ["AUTHENTICATION"],
+        action: "BLOCK",
+        reason: "Golden path test rule",
+      },
+    });
 
-      const afterSecond = await prisma.pullRequest.findFirst({
-        where: { organizationId: organization.id, number: 3 },
-      });
-      expect(afterSecond?.lastAnalyzedSha).toBe(secondSha);
-    },
-    30000,
-  );
+    const headSha = `sha-${runId}-2`;
+    const payload = buildPullRequestPayload({ number: 2, externalId: 5001, headSha });
+
+    const completion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
+    await ingestGitHubWebhookDelivery(JSON.stringify(payload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-2`,
+    });
+    await completion;
+
+    const pullRequest = await prisma.pullRequest.findFirstOrThrow({
+      where: { organizationId: organization.id, number: 2 },
+    });
+    const policyDecision = await prisma.policyDecision.findFirst({
+      where: { pullRequestId: pullRequest.id },
+      orderBy: { createdAt: "desc" },
+    });
+
+    expect(policyDecision?.action).toBe("BLOCK");
+    expect(policyDecision?.matchedRuleIds).toContain(rule.id);
+    expect(publishCheckRunMock.mock.calls[0]?.[0]).toMatchObject({
+      headSha,
+      summaryInput: { policyAction: "BLOCK" },
+    });
+  }, 20000);
+
+  it("downgrades organization BLOCK rules to REVIEW in dry-run mode", async () => {
+    const policy = await prisma.policy.create({
+      data: {
+        organizationId: organization.id,
+        name: "Auth Dry Run Test",
+        enabled: true,
+        mode: "DRY_RUN",
+      },
+    });
+    const rule = await prisma.policyRule.create({
+      data: {
+        organizationId: organization.id,
+        policyId: policy.id,
+        name: "Dry-run auth block",
+        sensitiveAreas: ["CI_CD"],
+        action: "BLOCK",
+        reason: "Dry-run policy test",
+      },
+    });
+
+    const headSha = `sha-${runId}-4`;
+    const payload = buildPullRequestPayload({ number: 4, externalId: 5003, headSha });
+    listPullRequestFilesMock.mockResolvedValueOnce([
+      {
+        filename: ".github/workflows/deploy.yml",
+        status: "modified",
+        additions: 2,
+        deletions: 1,
+        changes: 3,
+      },
+    ]);
+    const completion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
+    await ingestGitHubWebhookDelivery(JSON.stringify(payload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-4`,
+    });
+    await completion;
+
+    const pullRequest = await prisma.pullRequest.findFirstOrThrow({
+      where: { organizationId: organization.id, number: 4 },
+    });
+    const decision = await prisma.policyDecision.findFirstOrThrow({
+      where: { pullRequestId: pullRequest.id },
+      orderBy: { createdAt: "desc" },
+    });
+
+    expect(decision.action).toBe("REVIEW");
+    expect(decision.matchedRuleIds).toContain(rule.id);
+    expect(publishCheckRunMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      headSha,
+      summaryInput: { policyAction: "REVIEW" },
+    });
+  }, 20000);
+
+  it("does not apply disabled organization policy rules", async () => {
+    const policy = await prisma.policy.create({
+      data: {
+        organizationId: organization.id,
+        name: "Auth Disabled Test",
+        enabled: true,
+        mode: "DISABLED",
+      },
+    });
+    const rule = await prisma.policyRule.create({
+      data: {
+        organizationId: organization.id,
+        policyId: policy.id,
+        name: "Disabled auth block",
+        sensitiveAreas: ["DEPENDENCIES"],
+        action: "BLOCK",
+        reason: "Disabled policy test",
+      },
+    });
+
+    const headSha = `sha-${runId}-5`;
+    const payload = buildPullRequestPayload({ number: 5, externalId: 5004, headSha });
+    listPullRequestFilesMock.mockResolvedValueOnce([
+      {
+        filename: "package.json",
+        status: "modified",
+        additions: 2,
+        deletions: 1,
+        changes: 3,
+      },
+    ]);
+    const completion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
+    await ingestGitHubWebhookDelivery(JSON.stringify(payload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-5`,
+    });
+    await completion;
+
+    const pullRequest = await prisma.pullRequest.findFirstOrThrow({
+      where: { organizationId: organization.id, number: 5 },
+    });
+    const decision = await prisma.policyDecision.findFirstOrThrow({
+      where: { pullRequestId: pullRequest.id },
+      orderBy: { createdAt: "desc" },
+    });
+
+    expect(decision.action).toBe("ALLOW");
+    expect(decision.matchedRuleIds).not.toContain(rule.id);
+  }, 20000);
+
+  it("a genuine new push to the same PR is still analyzed (BullMQ dedup regression guard)", async () => {
+    const firstSha = `sha-${runId}-3a`;
+    const secondSha = `sha-${runId}-3b`;
+
+    const firstPayload = buildPullRequestPayload({
+      number: 3,
+      externalId: 5002,
+      headSha: firstSha,
+    });
+    const firstCompletion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
+    await ingestGitHubWebhookDelivery(JSON.stringify(firstPayload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-3a`,
+    });
+    await firstCompletion;
+
+    const afterFirst = await prisma.pullRequest.findFirst({
+      where: { organizationId: organization.id, number: 3 },
+    });
+    expect(afterFirst?.lastAnalyzedSha).toBe(firstSha);
+
+    const secondPayload = {
+      ...firstPayload,
+      action: "synchronize",
+      pull_request: {
+        ...firstPayload.pull_request,
+        head: { ref: "feature/login", sha: secondSha },
+      },
+    };
+
+    const secondCompletion = waitForJobOutcome(JOB_TYPES.PR_ANALYZE);
+    await ingestGitHubWebhookDelivery(JSON.stringify(secondPayload), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": `delivery-${runId}-3b`,
+    });
+    await secondCompletion;
+
+    const afterSecond = await prisma.pullRequest.findFirst({
+      where: { organizationId: organization.id, number: 3 },
+    });
+    expect(afterSecond?.lastAnalyzedSha).toBe(secondSha);
+  }, 30000);
 });

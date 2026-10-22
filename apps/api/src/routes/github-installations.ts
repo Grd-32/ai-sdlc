@@ -19,6 +19,7 @@
 import type { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { prisma, ensureOrganizationAccess, recordAuditEvent } from "@ai-sdlc/db";
+import { resolveOrganizationEntitlements } from "@ai-sdlc/billing";
 import { getInstallationDetails, listInstallationRepositories } from "@ai-sdlc/github";
 import { SESSION_COOKIE, verifySessionCookieValue } from "../auth/session.js";
 import type { AppEnv } from "../types.js";
@@ -49,7 +50,7 @@ export function registerGitHubInstallationRoutes(app: Hono<AppEnv>): void {
     const callbackState = c.req.query("state");
     const contextOrganizationId = getCookie(c, "ai_sdlc_github_installation_org");
     deleteCookie(c, "ai_sdlc_github_installation_org", {
-      path: "/api/github/installations/callback",
+      path: "/",
       secure: appUrl.startsWith("https://"),
       sameSite: "Lax",
     });
@@ -61,7 +62,7 @@ export function registerGitHubInstallationRoutes(app: Hono<AppEnv>): void {
         })
       : null;
     const organizationId =
-      callbackState || contextOrganizationId || existingInstallation?.organizationId;
+      contextOrganizationId || callbackState || existingInstallation?.organizationId;
 
     if (!installationId) {
       return c.redirect(`${appUrl}/dashboard/repositories?installError=missing_installation_id`);
@@ -197,6 +198,27 @@ export function registerGitHubInstallationRoutes(app: Hono<AppEnv>): void {
       const repositoryExternalIds = repositories.map((repository) => String(repository.id));
 
       await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${organizationId})) IS NULL AS locked`;
+        const entitlements = await resolveOrganizationEntitlements(organizationId, tx);
+        const existingRepositories = await tx.repository.findMany({
+          where: { organizationId, enabled: true },
+          select: { owner: true, name: true },
+        });
+        const existingNames = new Set(
+          existingRepositories.map((repository) => `${repository.owner}/${repository.name}`),
+        );
+        const newlyEnabledCount = repositories.filter(
+          (repository) =>
+            repository.owner?.login &&
+            repository.name &&
+            !existingNames.has(`${repository.owner.login}/${repository.name}`),
+        ).length;
+        if (
+          existingRepositories.length + newlyEnabledCount >
+          entitlements.entitlements.maxRepositories
+        ) {
+          throw new Error(`REPOSITORY_LIMIT_REACHED:${entitlements.entitlements.maxRepositories}`);
+        }
         for (const repository of repositories) {
           if (!repository.owner?.login || !repository.name || !repository.id) {
             throw new Error(
@@ -254,6 +276,12 @@ export function registerGitHubInstallationRoutes(app: Hono<AppEnv>): void {
       });
     } catch (error) {
       console.error("[github-installations] failed to sync installation repositories:", error);
+      if (error instanceof Error && error.message.startsWith("REPOSITORY_LIMIT_REACHED:")) {
+        const limit = error.message.split(":")[1] ?? "configured";
+        return c.redirect(
+          `${appUrl}/dashboard/repositories?installError=repository_limit_reached&limit=${encodeURIComponent(limit)}`,
+        );
+      }
       return c.redirect(`${appUrl}/dashboard/repositories?installError=repository_sync_failed`);
     }
 

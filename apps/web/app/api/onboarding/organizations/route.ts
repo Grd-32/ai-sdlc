@@ -51,7 +51,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return onboardingRedirect(request, "create_failed");
   }
 
-  const redirect = NextResponse.redirect(new URL("/dashboard", getAppOrigin(request)), 303);
+  const dashboardUrl = new URL("/dashboard", getAppOrigin(request));
+  dashboardUrl.searchParams.set("organization", "created");
+  const redirect = NextResponse.redirect(dashboardUrl, 303);
   redirect.cookies.set(SELECTED_ORG_COOKIE, result.data.id, {
     httpOnly: true,
     secure: getAppOrigin(request).startsWith("https://"),

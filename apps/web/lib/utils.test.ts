@@ -7,6 +7,24 @@ describe("web utils", () => {
   });
 
   it("returns default API URL", () => {
-    expect(getApiUrl()).toBe("http://localhost:3001");
+    const publicApiUrl = process.env["NEXT_PUBLIC_API_URL"];
+    const internalApiUrl = process.env["API_INTERNAL_URL"];
+    delete process.env["NEXT_PUBLIC_API_URL"];
+    delete process.env["API_INTERNAL_URL"];
+
+    try {
+      expect(getApiUrl()).toBe("http://localhost:3001");
+    } finally {
+      if (publicApiUrl === undefined) {
+        delete process.env["NEXT_PUBLIC_API_URL"];
+      } else {
+        process.env["NEXT_PUBLIC_API_URL"] = publicApiUrl;
+      }
+      if (internalApiUrl === undefined) {
+        delete process.env["API_INTERNAL_URL"];
+      } else {
+        process.env["API_INTERNAL_URL"] = internalApiUrl;
+      }
+    }
   });
 });

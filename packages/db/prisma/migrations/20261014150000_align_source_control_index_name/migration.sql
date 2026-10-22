@@ -1,0 +1,2 @@
+ALTER INDEX "SourceControlConnection_organizationId_provider_externalAccount"
+  RENAME TO "SourceControlConnection_organizationId_provider_externalAcc_key";

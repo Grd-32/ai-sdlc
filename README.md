@@ -1,11 +1,11 @@
-# AI-SDLC Control Plane
+# Nomalog
 
-AI-SDLC is a vendor-neutral control plane for AI-assisted software delivery. It models the organization, repository, policy, evidence, and governance workflows needed to review AI-assisted changes before they reach production.
+Nomalog is an enterprise software-governance platform that connects GitHub changes to organization policy, risk, security evidence, AI provenance, and accountable human review. It helps engineering and security teams govern software delivery with traceable decisions rather than relying on assumptions about how code was produced.
 
 ## What this repo contains
 
 - `apps/api`: Hono API for dashboard and admin routes
-- `apps/web`: Next.js dashboard for organizations, policies, and evidence
+- `apps/web`: Next.js workspace for members, changes, policies, and evidence
 - `apps/worker`: BullMQ worker for background processing
 - `packages/db`: Prisma schema and tenant-aware database helpers
 - `packages/github`: GitHub app/webhook support and app configuration helpers
@@ -17,15 +17,19 @@ AI-SDLC is a vendor-neutral control plane for AI-assisted software delivery. It 
 
 ## Current status
 
-This repository is a working MVP and milestone-based implementation. It includes:
+Nomalog is an actively developed product. The repository includes:
 
-- tenant-aware organization membership and RBAC helpers
-- GitHub webhook ingest + verification
-- repository, policy, and evidence domain models
-- retention cleanup scheduling and exports for privacy lifecycle management
-- observability and operational runbook scaffolding
+- tenant-scoped organizations, membership administration, role checks, and audit events
+- GitHub App installation, signed webhook ingestion, and idempotent processing
+- repository change analysis, deterministic risk and policy decisions, and evidence records
+- per-commit human-review assignment and decision tracking with GitHub Check Run updates
+- member sign-in visibility, privacy exports, retention cleanup, and operational tooling
 
-It is not yet a production-grade enterprise platform. The codebase still requires additional hardening for production SSO, rate limiting, webhook reliability, and formal compliance controls.
+Implementation status and the evidence still needed for production rollout are tracked in the
+[Product Implementation Matrix](./docs/PRODUCT_IMPLEMENTATION_MATRIX.md). The platform is not
+production-ready merely because a workflow exists in code: validate identity/provider setup,
+branch protection, backups, monitoring, and recovery in the target deployment before enforcing
+policies for production repositories.
 
 ## Local development
 
@@ -46,6 +50,7 @@ another organization.
 
 ## Key operational docs
 
+- [docs/PRODUCT_IMPLEMENTATION_MATRIX.md](./docs/PRODUCT_IMPLEMENTATION_MATRIX.md)
 - [docs/LOCAL_DEVELOPMENT_SETUP.md](./docs/LOCAL_DEVELOPMENT_SETUP.md)
 - [docs/ENTERPRISE_READINESS_AUDIT.md](./docs/ENTERPRISE_READINESS_AUDIT.md)
 - [docs/PRIVACY_DATA_LIFECYCLE.md](./docs/PRIVACY_DATA_LIFECYCLE.md)

@@ -18,7 +18,7 @@ groups:
         for: 10m
         labels:
           severity: warning
-          service: ai-sdlc-api
+          service: nomalog-api
         annotations:
           summary: API is consuming its 99.9% availability error budget quickly
           description: More than 1% of non-probe API requests returned 5xx responses over the last hour.
@@ -29,7 +29,7 @@ groups:
         for: 5m
         labels:
           severity: warning
-          service: ai-sdlc-api
+          service: nomalog-api
         annotations:
           summary: API server error rate is above 5%
           description: More than 5% of API requests returned 5xx responses over the last five minutes.

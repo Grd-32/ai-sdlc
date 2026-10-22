@@ -153,7 +153,10 @@ import {
   getCurrentUser,
   getInstallations,
   getAuditEvents,
+  getOrganizationDeletionRequest,
 } from "@/lib/api";
+import { DataDeletionRequest, InstallationDisconnectButton } from "./self-service-controls";
+import { SsoSettings } from "./sso-settings";
 
 export default async function SettingsPage() {
   const organizations = await getOrganizations();
@@ -171,9 +174,10 @@ export default async function SettingsPage() {
   // `data: null` shape as "no rows exist yet", so this page can't currently
   // tell those two cases apart. Worth a proper fix if this proves confusing
   // in practice.
-  const [installations, auditEvents] = await Promise.all([
+  const [installations, auditEvents, deletionRequest] = await Promise.all([
     getInstallations(selectedOrg.id),
     getAuditEvents(selectedOrg.id),
+    getOrganizationDeletionRequest(selectedOrg.id),
   ]);
 
   return (
@@ -223,6 +227,7 @@ export default async function SettingsPage() {
                   <th className="px-4 py-3 font-medium">Type</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Connected</th>
+                  <th className="px-4 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -240,6 +245,17 @@ export default async function SettingsPage() {
                     <td className="px-4 py-3 text-slate-500">
                       {new Date(inst.createdAt).toLocaleDateString()}
                     </td>
+                    <td className="px-4 py-3">
+                      {inst.active &&
+                      ["OWNER", "ADMIN"].includes(selectedOrg.role.toUpperCase()) ? (
+                        <InstallationDisconnectButton
+                          organizationId={selectedOrg.id}
+                          installationId={inst.id}
+                        />
+                      ) : (
+                        <span className="text-xs text-slate-500">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -250,19 +266,43 @@ export default async function SettingsPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Organization data deletion</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <DataDeletionRequest
+            organizationId={selectedOrg.id}
+            organizationSlug={selectedOrg.slug}
+            isOwner={selectedOrg.role.toUpperCase() === "OWNER"}
+            currentStatus={deletionRequest?.status ?? null}
+          />
+        </CardContent>
+      </Card>
+
+      {["OWNER", "ADMIN"].includes(selectedOrg.role.toUpperCase()) && (
+        <Card>
+          <CardContent className="pt-6">
+            <SsoSettings
+              organizationId={selectedOrg.id}
+              organizationSlug={selectedOrg.slug}
+              initiallyEnforced={selectedOrg.ssoEnforced}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Policies</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-slate-500">
-            AI-assisted changes are evaluated against the platform&apos;s built-in default rules
-            (payments, secrets, authentication, infrastructure, high risk), plus any
-            organization-defined policies you&apos;ve created — both are applied together, with the
-            strongest matching action (BLOCK &gt; REVIEW &gt; ALLOW) winning. There&apos;s no policy
-            editor here yet; policies can currently only be managed via the API. See{" "}
+            Changes are evaluated against platform default rules and enabled organization policies.
+            When multiple rules match, the strongest action (BLOCK &gt; REVIEW &gt; ALLOW) wins.
+            Manage organization policies and their enforcement modes from{" "}
             <a href="/dashboard/policies" className="underline">
-              Policies
-            </a>{" "}
-            for the current rule set.
+              the Policies page
+            </a>
+            .
           </p>
         </CardContent>
       </Card>

@@ -18,7 +18,12 @@ vi.mock("./analyze.js", () => ({ processPullRequestAnalyze: vi.fn() }));
 vi.mock("./retention.js", () => ({ processRetentionCleanup: vi.fn() }));
 
 import { JOB_TYPES, WEBHOOK_STATUS } from "../config.js";
-import { processGitHubWebhookEvent, type GitHubWebhookEventJobData } from "./index.js";
+import {
+  processGitHubWebhookEvent,
+  processSourceControlWebhookEvent,
+  type GitHubWebhookEventJobData,
+  type SourceControlWebhookEventJobData,
+} from "./index.js";
 
 function webhookJob(attemptsMade: number, attempts: number): Job<GitHubWebhookEventJobData> {
   return {
@@ -91,5 +96,39 @@ describe("webhook event retry lifecycle", () => {
 
     expect(updateCalls[2]?.data.status).toBe(WEBHOOK_STATUS.FAILED);
     expect(updateCalls[2]?.data.processedAt).toBeInstanceOf(Date);
+  });
+
+  it("completes a source-control delivery using its provider key", async () => {
+    dbMocks.updateMany.mockImplementation(
+      (args: {
+        where: { provider: string; deliveryId: string };
+        data: { status: string; processedAt: Date | null };
+      }) => {
+        updateCalls.push(args);
+        return Promise.resolve({ count: 1 });
+      },
+    );
+    const job = {
+      id: "job-2",
+      name: JOB_TYPES.SOURCE_CONTROL_WEBHOOK_EVENT,
+      data: {
+        eventType: "Merge Request Hook",
+        deliveryId: "connection-1:event-1",
+        payloadHash: "payload-hash",
+        provider: "GITLAB",
+        enqueuedAt: new Date().toISOString(),
+      } satisfies SourceControlWebhookEventJobData,
+      opts: { attempts: 5 },
+      attemptsMade: 0,
+    } as unknown as Job<SourceControlWebhookEventJobData>;
+
+    await processSourceControlWebhookEvent(job);
+
+    expect(updateCalls).toHaveLength(2);
+    expect(updateCalls[0]?.where).toEqual({
+      provider: "GITLAB",
+      deliveryId: "connection-1:event-1",
+    });
+    expect(updateCalls[1]?.data.status).toBe(WEBHOOK_STATUS.COMPLETED);
   });
 });

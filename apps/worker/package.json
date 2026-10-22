@@ -14,10 +14,13 @@
   },
   "dependencies": {
     "@ai-sdlc/db": "workspace:*",
+    "@ai-sdlc/billing": "workspace:*",
     "@ai-sdlc/github": "workspace:*",
     "@ai-sdlc/security": "workspace:*",
     "@ai-sdlc/risk": "workspace:*",
     "@ai-sdlc/policy": "workspace:*",
+    "@ai-sdlc/provenance": "workspace:*",
+    "@ai-sdlc/source-control": "workspace:*",
     "bullmq": "^5.34.3",
     "ioredis": "^5.4.2"
   },

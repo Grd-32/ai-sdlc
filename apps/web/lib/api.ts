@@ -275,6 +275,7 @@
 // }
 import { cache } from "react";
 import { cookies } from "next/headers";
+import type { PolicyCondition } from "@ai-sdlc/policy";
 import { getApiUrl } from "./utils";
 
 export interface ApiEnvelope<T> {
@@ -311,7 +312,12 @@ export async function mutateApi<T = unknown>(
   path: string,
   method: "POST" | "PATCH" | "DELETE",
   body?: unknown,
-): Promise<{ ok: boolean; data: T | null; error: { code: string; message: string } | null }> {
+): Promise<{
+  ok: boolean;
+  status: number | null;
+  data: T | null;
+  error: { code: string; message: string } | null;
+}> {
   try {
     const cookieStore = await cookies();
     const res = await fetch(`${getApiUrl()}${path}`, {
@@ -324,9 +330,14 @@ export async function mutateApi<T = unknown>(
       cache: "no-store",
     });
     const json = (await res.json()) as ApiEnvelope<T>;
-    return { ok: res.ok, data: json.data, error: json.error };
+    return { ok: res.ok, status: res.status, data: json.data, error: json.error };
   } catch {
-    return { ok: false, data: null, error: { code: "NETWORK_ERROR", message: "Failed to reach API" } };
+    return {
+      ok: false,
+      status: null,
+      data: null,
+      error: { code: "NETWORK_ERROR", message: "Failed to reach API" },
+    };
   }
 }
 
@@ -348,12 +359,60 @@ export interface OrganizationSummary {
   name: string;
   slug: string;
   role: string;
+  policyApprovalQuorum: number;
+  ssoEnforced: boolean;
 }
+
+export interface CommercialPlanOffer {
+  id: "FREE_ASSESSMENT" | "PROFESSIONAL" | "ENTERPRISE";
+  name: string;
+  description: string;
+  displayPrice: string;
+  interval: "none" | "month" | "year" | "custom";
+  selfServeCheckout: boolean;
+  entitlements: {
+    maxRepositories: number;
+    assessmentsPerMonth: number;
+    analysisJobsPerMonth: number;
+    continuousAnalysis: boolean;
+    policyEnforcement: boolean;
+    retentionDays: number;
+    dataExport: boolean;
+    maxTeamMembers: number;
+    enterpriseIntegrations: boolean;
+  };
+}
+
+export const getCommercialPlans = cache(async (): Promise<CommercialPlanOffer[]> => {
+  const result = await apiFetch<CommercialPlanOffer[]>("/api/billing/plans");
+  return result.data ?? [];
+});
 
 export const getOrganizations = cache(async (): Promise<OrganizationSummary[]> => {
   const result = await apiFetch<OrganizationSummary[]>("/api/organizations");
   return result.data ?? [];
 });
+
+export interface OrganizationMemberSummary {
+  id: string;
+  userId: string;
+  role: string;
+  email: string;
+  name: string | null;
+  username: string | null;
+  externalId: string | null;
+  active: boolean;
+  lastLoginAt: string | null;
+}
+
+export async function getOrganizationMembers(
+  organizationId: string,
+): Promise<OrganizationMemberSummary[]> {
+  const result = await apiFetch<OrganizationMemberSummary[]>(
+    `/api/organizations/${organizationId}/members`,
+  );
+  return result.data ?? [];
+}
 
 export async function getSelectedOrganization(
   organizations: OrganizationSummary[],
@@ -368,6 +427,7 @@ export async function getSelectedOrganization(
 
 export interface OverviewMetrics {
   aiAssistedPullRequests: number;
+  unattributedPullRequests: number;
   highRiskChanges: number;
   criticalChanges: number;
   blockedChanges: number;
@@ -378,6 +438,176 @@ export interface OverviewMetrics {
 export async function getOverview(organizationId: string): Promise<OverviewMetrics | null> {
   const result = await apiFetch<OverviewMetrics>(`/api/organizations/${organizationId}/overview`);
   return result.data;
+}
+
+export interface GovernanceAnalytics {
+  days: 7 | 30 | 90;
+  periodStart: string;
+  openFindings: number;
+  openFindingsBySeverity: Record<string, number>;
+  overdueFindings: number;
+  activeRiskAcceptances: number;
+  expiredRiskAcceptances: number;
+  resolvedFindings: number;
+  averageRemediationDays: number | null;
+  completedReviews: number;
+  reviewApprovalRate: number | null;
+  newPullRequests: number;
+  enabledRepositories: number;
+  recentlyAssessedRepositories: number;
+  repositoryAssessmentCoveragePercent: number | null;
+  pullRequestsInPeriod: number;
+  analyzedPullRequests: number;
+  changeAnalysisCoveragePercent: number | null;
+  unknownProvenancePullRequests: number;
+  provenanceUnknownPercent: number | null;
+  connectedSourceControlIntegrations: number;
+  disconnectedSourceControlIntegrations: number;
+  policyDecisionsByAction: Record<string, number>;
+  failedSecurityGates: number;
+  evidenceByStatus: Record<string, number>;
+  notificationEmailStatuses: Record<string, number>;
+  pullRequestsWithPassports: number;
+  passportAvailabilityPercent: number | null;
+  trends: {
+    pullRequests: Array<{ day: string; count: number }>;
+    reviewsCompleted: Array<{ day: string; count: number }>;
+    findingsResolved: Array<{ day: string; count: number }>;
+  };
+}
+
+export async function getGovernanceAnalytics(
+  organizationId: string,
+  days: 7 | 30 | 90 = 30,
+): Promise<GovernanceAnalytics | null> {
+  const result = await apiFetch<GovernanceAnalytics>(
+    `/api/organizations/${organizationId}/governance-analytics?days=${days}`,
+  );
+  return result.data;
+}
+
+export interface NotificationSummary {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  href: string | null;
+  readAt: string | null;
+  emailStatus: "PENDING" | "SENT" | "SKIPPED" | "FAILED";
+  category: string;
+  severity: string | null;
+  createdAt: string;
+}
+
+export interface NotificationPage {
+  items: NotificationSummary[];
+  nextCursor: string | null;
+  unreadCount: number;
+}
+
+export async function getNotifications(organizationId: string): Promise<NotificationPage> {
+  const result = await apiFetch<NotificationPage>(
+    `/api/organizations/${organizationId}/notifications?limit=50`,
+  );
+  return result.data ?? { items: [], nextCursor: null, unreadCount: 0 };
+}
+
+export interface NotificationDeliveryOperations {
+  periodStart: string;
+  statusCounts: Record<string, number>;
+  attempts: Array<{
+    id: string;
+    attempt: number;
+    status: string;
+    attemptedAt: string;
+    completedAt: string | null;
+    latencyMs: number | null;
+    errorCode: string | null;
+    notification: { id: string; type: string; createdAt: string };
+  }>;
+}
+
+export async function getNotificationDeliveryOperations(
+  organizationId: string,
+): Promise<NotificationDeliveryOperations | null> {
+  const result = await apiFetch<NotificationDeliveryOperations>(
+    `/api/organizations/${organizationId}/notification-delivery-operations`,
+  );
+  return result.data;
+}
+
+export interface NotificationPreferences {
+  emailEnabled: boolean;
+  securityEmailEnabled: boolean;
+  assessmentsEmailEnabled: boolean;
+  governanceEmailEnabled: boolean;
+  integrationsEmailEnabled: boolean;
+  accountEmailEnabled: boolean;
+}
+
+export async function getNotificationPreference(
+  organizationId: string,
+): Promise<NotificationPreferences> {
+  const result = await apiFetch<NotificationPreferences>(
+    `/api/organizations/${organizationId}/notification-preferences`,
+  );
+  return (
+    result.data ?? {
+      emailEnabled: true,
+      securityEmailEnabled: true,
+      assessmentsEmailEnabled: true,
+      governanceEmailEnabled: true,
+      integrationsEmailEnabled: true,
+      accountEmailEnabled: true,
+    }
+  );
+}
+
+export interface FindingActivityRecord {
+  id: string;
+  type: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  comment: string | null;
+  createdAt: string;
+  actor: { id: string; name: string | null; username: string | null } | null;
+}
+
+export interface SecurityFindingWorkflowRecord {
+  id: string;
+  provider: string;
+  category: string | null;
+  severity: string;
+  title: string;
+  description: string | null;
+  file: string | null;
+  line: number | null;
+  status: string;
+  resolutionVerification: "NOT_VERIFIED" | "USER_REPORTED" | "VERIFIED";
+  dueAt: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assignee: { id: string; name: string | null; email: string; username: string | null } | null;
+  repository: { owner: string; name: string } | null;
+  pullRequest: { id: string; number: number; title: string } | null;
+  activities: FindingActivityRecord[];
+  riskAcceptances: Array<{ expiresAt: string | null; reason: string | null }>;
+}
+
+export async function getSecurityFindings(
+  organizationId: string,
+  filters: { status?: string; severity?: string; overdue?: boolean } = {},
+): Promise<SecurityFindingWorkflowRecord[]> {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.severity) params.set("severity", filters.severity);
+  if (filters.overdue) params.set("overdue", "true");
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  const result = await apiFetch<SecurityFindingWorkflowRecord[]>(
+    `/api/organizations/${organizationId}/findings${query}`,
+  );
+  return result.data ?? [];
 }
 
 export interface PullRequestSummary {
@@ -428,6 +658,7 @@ export interface AIActivityRecord {
   involvement: "YES" | "NO" | "UNKNOWN";
   confidence: number;
   source: string;
+  metadata: Record<string, unknown> | null;
 }
 
 export interface RiskAssessmentRecord {
@@ -436,6 +667,7 @@ export interface RiskAssessmentRecord {
   level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   explanation: string | null;
   modelVersion: string;
+  factors: unknown;
 }
 
 export interface PolicyDecisionRecord {
@@ -452,6 +684,14 @@ export interface EvidenceRecord {
   status: "PASS" | "FAIL" | "UNKNOWN" | "NOT_RUN" | "NOT_APPLICABLE";
   source: string;
   details: string | null;
+  metadata: Record<string, unknown> | null;
+  pullRequestId: string | null;
+  pullRequest: {
+    id: string;
+    number: number;
+    title: string;
+    repository: { owner: string; name: string };
+  } | null;
   createdAt: string;
 }
 
@@ -464,19 +704,34 @@ export interface SecurityFindingRecord {
   status: string;
 }
 
+export interface ReviewRecord {
+  id: string;
+  reviewerId: string | null;
+  reviewer: { id: string; name: string | null; username: string | null } | null;
+  decision: "APPROVED" | "REJECTED" | "CHANGES_REQUESTED" | null;
+  status: string;
+  comment: string | null;
+  reviewedHeadSha: string | null;
+  requirement: string;
+  createdAt: string;
+}
+
 export interface PullRequestDetail {
   id: string;
   number: number;
   title: string;
   state: string;
+  headSha: string | null;
   authorLogin: string | null;
   repository: { owner: string; name: string; criticality: string };
   aiActivities: AIActivityRecord[];
   riskAssessments: RiskAssessmentRecord[];
   policyDecisions: PolicyDecisionRecord[];
+  reviews: ReviewRecord[];
   codeChanges: CodeChangeRecord[];
   findings: SecurityFindingRecord[];
   evidence: EvidenceRecord[];
+  passports: Array<{ id: string; status: string; updatedAt: string }>;
 }
 
 export async function getPullRequestDetail(
@@ -491,24 +746,65 @@ export async function getPullRequestDetail(
 
 export interface RepositorySummary {
   id: string;
+  provider: string;
   owner: string;
   name: string;
   criticality: string;
   enabled: boolean;
   _count: { pullRequests: number };
+  installation: { permissions: Record<string, string> | null } | null;
 }
 
 export async function getRepositories(organizationId: string): Promise<RepositorySummary[]> {
-  const result = await apiFetch<RepositorySummary[]>(`/api/organizations/${organizationId}/repositories`);
+  const result = await apiFetch<RepositorySummary[]>(
+    `/api/organizations/${organizationId}/repositories`,
+  );
   return result.data ?? [];
 }
 
-// Matches the redesigned PolicyRule schema (Phase 14) — a fixed condition
-// shape, not a generic field/operator/value DSL. See POLICY_RULE_SCHEMA_CHANGE.md.
+export interface AssessmentRecord {
+  id: string;
+  status:
+    | "CREATED"
+    | "AUTHORIZATION_PENDING"
+    | "QUEUED"
+    | "RUNNING"
+    | "COMPLETED"
+    | "COMPLETED_WITH_LIMITATIONS"
+    | "FAILED"
+    | "CANCELLED";
+  windowStart: string;
+  windowEnd: string;
+  progress: number;
+  totalPullRequests: number;
+  processedPullRequests: number;
+  report: Record<string, unknown> | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  attempt: number;
+  queuedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  repositories: Array<{ id: string; owner: string; name: string }>;
+}
+
+export async function getAssessments(organizationId: string): Promise<AssessmentRecord[]> {
+  const result = await apiFetch<AssessmentRecord[]>(
+    `/api/organizations/${organizationId}/assessments`,
+  );
+  return result.data ?? [];
+}
+
+// Matches the persisted policy rule shape, including validated nested conditions.
 export interface PolicyRuleRecord {
   id: string;
   name: string;
   aiInvolved: boolean | null;
+  conditionExpression: PolicyCondition | null;
   sensitiveAreas: string[];
   riskAtLeast: number | null;
   repositoryCriticalityIn: string[];
@@ -528,6 +824,20 @@ export interface PolicySummary {
   mode: PolicyMode;
   version: string;
   policyRules: PolicyRuleRecord[];
+  enforcementApproval: {
+    requiredApprovals: number;
+    approvalCount: number;
+    approved: boolean;
+    revisionAuthorId?: string | null;
+    approverIds?: string[];
+  };
+  revisions?: Array<{
+    id: string;
+    version: string;
+    actorId: string | null;
+    snapshot: unknown;
+    createdAt: string;
+  }>;
 }
 
 export async function getPolicies(organizationId: string): Promise<PolicySummary[]> {
@@ -543,7 +853,9 @@ export async function getEvidence(
   if (filters.pullRequestId) params.set("pullRequestId", filters.pullRequestId);
   const query = params.toString() ? `?${params.toString()}` : "";
 
-  const result = await apiFetch<EvidenceRecord[]>(`/api/organizations/${organizationId}/evidence${query}`);
+  const result = await apiFetch<EvidenceRecord[]>(
+    `/api/organizations/${organizationId}/evidence${query}`,
+  );
   return result.data ?? [];
 }
 
@@ -571,8 +883,24 @@ export interface InstallationSummary {
 }
 
 export async function getInstallations(organizationId: string): Promise<InstallationSummary[]> {
-  const result = await apiFetch<InstallationSummary[]>(`/api/organizations/${organizationId}/installations`);
+  const result = await apiFetch<InstallationSummary[]>(
+    `/api/organizations/${organizationId}/installations`,
+  );
   return result.data ?? [];
+}
+
+export interface OrganizationDeletionRequestSummary {
+  status: string;
+  createdAt: string;
+}
+
+export async function getOrganizationDeletionRequest(
+  organizationId: string,
+): Promise<OrganizationDeletionRequestSummary | null> {
+  const result = await apiFetch<OrganizationDeletionRequestSummary>(
+    `/api/organizations/${organizationId}/settings/data-deletion`,
+  );
+  return result.data;
 }
 
 export interface AuditEventSummary {
@@ -584,6 +912,8 @@ export interface AuditEventSummary {
 }
 
 export async function getAuditEvents(organizationId: string): Promise<AuditEventSummary[]> {
-  const result = await apiFetch<AuditEventSummary[]>(`/api/organizations/${organizationId}/audit-events`);
+  const result = await apiFetch<AuditEventSummary[]>(
+    `/api/organizations/${organizationId}/audit-events`,
+  );
   return result.data ?? [];
 }

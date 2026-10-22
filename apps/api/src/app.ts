@@ -152,7 +152,7 @@
 // app.get("/", (c) => {
 //   return c.json({
 //     data: {
-//       name: "AI-SDLC Control Plane API",
+//       name: "Nomalog API",
 //       version: "0.1.0",
 //     },
 //     error: null,
@@ -168,7 +168,26 @@ import { checkDatabaseConnection } from "@ai-sdlc/db";
 import { getGitHubAppConfig, verifyWebhookSignature } from "@ai-sdlc/github";
 import { enqueueHealthCheck, getRedisConnection } from "./queue.js";
 import { GitHubWebhookDeliveryConflictError, ingestGitHubWebhookDelivery } from "./webhooks.js";
+import {
+  BitbucketWebhookAuthenticationError,
+  BitbucketWebhookDeliveryConflictError,
+  BitbucketWebhookPayloadError,
+  ingestBitbucketWebhookDelivery,
+} from "./bitbucket-webhooks.js";
+import {
+  AzureDevOpsWebhookAuthenticationError,
+  AzureDevOpsWebhookDeliveryConflictError,
+  AzureDevOpsWebhookPayloadError,
+  ingestAzureDevOpsWebhookDelivery,
+} from "./azure-devops-webhooks.js";
+import {
+  GitLabWebhookAuthenticationError,
+  GitLabWebhookDeliveryConflictError,
+  GitLabWebhookPayloadError,
+  ingestGitLabWebhookDelivery,
+} from "./gitlab-webhooks.js";
 import { registerAuthRoutes } from "./auth/github-oauth.js";
+import { registerSsoAuthRoutes } from "./auth/sso.js";
 import { registerOrganizationRoutes } from "./routes/organizations.js";
 import { registerGitHubInstallationRoutes } from "./routes/github-installations.js";
 import { registerAgentRoutes } from "./routes/agents.js";
@@ -176,12 +195,25 @@ import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerPolicyManagementRoutes } from "./routes/policy-management.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.js";
 import { registerIdentityProviderRoutes } from "./routes/identity-providers.js";
+import { registerOrganizationDomainRoutes } from "./routes/organization-domains.js";
 import { registerScimRoutes } from "./routes/scim.js";
+import { registerReviewRoutes } from "./routes/reviews.js";
+import { registerAssessmentRoutes } from "./routes/assessments.js";
+import { registerBillingRoutes } from "./routes/billing.js";
+import { registerGitLabRoutes } from "./routes/gitlab.js";
+import { registerThirdPartySourceControlRoutes } from "./routes/third-party-source-control.js";
+import { registerNotificationRoutes } from "./routes/notifications.js";
+import { registerRemediationRoutes } from "./routes/remediation.js";
+import { registerGovernanceAnalyticsRoutes } from "./routes/governance-analytics.js";
+import { registerPassportRoutes } from "./routes/passports.js";
+import { registerQueueOperationsRoutes } from "./routes/queue-operations.js";
+import { getStripeClient, getStripeWebhookSecret } from "./billing/stripe.js";
+import { processStripeEvent } from "./billing/webhook.js";
 import type { AppEnv } from "./types.js";
 
 const app = new Hono<AppEnv>();
-const tracer = trace.getTracer("ai-sdlc-api");
-const meter = metrics.getMeter("ai-sdlc-api");
+const tracer = trace.getTracer("nomalog-api");
+const meter = metrics.getMeter("nomalog-api");
 const requestCount = meter.createCounter("http.server.request.count", {
   description: "Number of API requests completed",
 });
@@ -407,7 +439,6 @@ app.post("/api/webhooks/github", async (c) => {
       "x-github-event": event,
       "x-github-delivery": delivery,
     });
-
     return c.json(
       {
         data: {
@@ -451,6 +482,229 @@ app.post("/api/webhooks/github", async (c) => {
   }
 });
 
+app.post("/api/webhooks/gitlab", async (c) => {
+  const payload = await c.req.text();
+  try {
+    const result = await ingestGitLabWebhookDelivery(payload, {
+      "x-gitlab-token": c.req.header("x-gitlab-token"),
+      "x-gitlab-event": c.req.header("x-gitlab-event"),
+      "x-gitlab-event-uuid": c.req.header("x-gitlab-event-uuid"),
+    });
+    return c.json(
+      {
+        data: { accepted: true, ...result },
+        error: null,
+      },
+      202,
+    );
+  } catch (error) {
+    if (error instanceof GitLabWebhookAuthenticationError) {
+      return c.json(
+        {
+          data: null,
+          error: {
+            code: "INVALID_WEBHOOK_TOKEN",
+            message: "GitLab webhook authentication failed.",
+          },
+        },
+        401,
+      );
+    }
+    if (error instanceof GitLabWebhookPayloadError) {
+      return c.json(
+        {
+          data: null,
+          error: { code: "INVALID_WEBHOOK_PAYLOAD", message: error.message },
+        },
+        400,
+      );
+    }
+    if (error instanceof GitLabWebhookDeliveryConflictError) {
+      return c.json(
+        {
+          data: null,
+          error: { code: "GITLAB_WEBHOOK_DELIVERY_CONFLICT", message: error.message },
+        },
+        409,
+      );
+    }
+    console.error("[gitlab.webhook] ingestion failed:", error);
+    return c.json(
+      {
+        data: null,
+        error: {
+          code: "GITLAB_WEBHOOK_INGESTION_FAILED",
+          message: "The GitLab webhook delivery could not be processed.",
+        },
+      },
+      500,
+    );
+  }
+});
+
+app.post("/api/webhooks/bitbucket/:connectionId", async (c) => {
+  const payload = await c.req.text();
+  try {
+    const result = await ingestBitbucketWebhookDelivery(c.req.param("connectionId"), payload, {
+      "x-hub-signature": c.req.header("x-hub-signature"),
+      "x-event-key": c.req.header("x-event-key"),
+      "x-request-uuid": c.req.header("x-request-uuid"),
+    });
+    return c.json({ data: { accepted: true, ...result }, error: null }, 202);
+  } catch (error) {
+    if (error instanceof BitbucketWebhookAuthenticationError) {
+      return c.json(
+        {
+          data: null,
+          error: {
+            code: "INVALID_WEBHOOK_SIGNATURE",
+            message: "Bitbucket webhook authentication failed.",
+          },
+        },
+        401,
+      );
+    }
+    if (error instanceof BitbucketWebhookPayloadError) {
+      return c.json(
+        {
+          data: null,
+          error: { code: "INVALID_WEBHOOK_PAYLOAD", message: error.message },
+        },
+        400,
+      );
+    }
+    if (error instanceof BitbucketWebhookDeliveryConflictError) {
+      return c.json(
+        {
+          data: null,
+          error: { code: "BITBUCKET_WEBHOOK_DELIVERY_CONFLICT", message: error.message },
+        },
+        409,
+      );
+    }
+    console.error("[bitbucket.webhook] ingestion failed:", error);
+    return c.json(
+      {
+        data: null,
+        error: {
+          code: "BITBUCKET_WEBHOOK_INGESTION_FAILED",
+          message: "The Bitbucket webhook delivery could not be processed.",
+        },
+      },
+      500,
+    );
+  }
+});
+
+app.post("/api/webhooks/azure-devops/:connectionId", async (c) => {
+  const payload = await c.req.text();
+  try {
+    const result = await ingestAzureDevOpsWebhookDelivery(
+      c.req.param("connectionId"),
+      payload,
+      c.req.header("authorization"),
+    );
+    return c.json({ data: { accepted: true, ...result }, error: null }, 202);
+  } catch (error) {
+    if (error instanceof AzureDevOpsWebhookAuthenticationError) {
+      return c.json(
+        {
+          data: null,
+          error: {
+            code: "INVALID_WEBHOOK_AUTHENTICATION",
+            message: "Azure DevOps webhook authentication failed.",
+          },
+        },
+        401,
+      );
+    }
+    if (error instanceof AzureDevOpsWebhookPayloadError) {
+      return c.json(
+        {
+          data: null,
+          error: { code: "INVALID_WEBHOOK_PAYLOAD", message: error.message },
+        },
+        400,
+      );
+    }
+    if (error instanceof AzureDevOpsWebhookDeliveryConflictError) {
+      return c.json(
+        {
+          data: null,
+          error: {
+            code: "AZURE_DEVOPS_WEBHOOK_DELIVERY_CONFLICT",
+            message: error.message,
+          },
+        },
+        409,
+      );
+    }
+    console.error("[azure-devops.webhook] ingestion failed:", error);
+    return c.json(
+      {
+        data: null,
+        error: {
+          code: "AZURE_DEVOPS_WEBHOOK_INGESTION_FAILED",
+          message: "The Azure DevOps webhook delivery could not be processed.",
+        },
+      },
+      500,
+    );
+  }
+});
+
+app.post("/api/webhooks/stripe", async (c) => {
+  const signature = c.req.header("stripe-signature");
+  if (!signature) {
+    return c.json(
+      {
+        data: null,
+        error: { code: "INVALID_WEBHOOK_SIGNATURE", message: "Stripe signature is required." },
+      },
+      400,
+    );
+  }
+  let event;
+  try {
+    const payload = await c.req.text();
+    event = getStripeClient().webhooks.constructEvent(payload, signature, getStripeWebhookSecret());
+  } catch (error) {
+    const configured = error instanceof Error && /not configured|missing/i.test(error.message);
+    return c.json(
+      {
+        data: null,
+        error: {
+          code: configured ? "BILLING_NOT_CONFIGURED" : "INVALID_WEBHOOK_SIGNATURE",
+          message: configured
+            ? "Stripe webhook processing is not configured."
+            : "Stripe signature verification failed.",
+        },
+      },
+      configured ? 503 : 400,
+    );
+  }
+  try {
+    await processStripeEvent(event);
+    return c.json({ data: { received: true, eventId: event.id }, error: null });
+  } catch (error) {
+    console.error("[stripe-webhook] processing failed", {
+      eventId: event.id,
+      eventType: event.type,
+      error: error instanceof Error ? error.message : "Unknown processing error",
+    });
+    return c.json(
+      {
+        data: null,
+        error: {
+          code: "BILLING_WEBHOOK_PROCESSING_FAILED",
+          message: "Webhook processing failed and may be retried.",
+        },
+      },
+      500,
+    );
+  }
+});
+
 /** Enqueue a test job to verify BullMQ pipeline (Phase 0) — disabled in production. */
 app.post("/health/queue-test", async (c) => {
   if (process.env["NODE_ENV"] === "production") {
@@ -476,6 +730,7 @@ app.post("/health/queue-test", async (c) => {
 
 // Phase 13: authentication + tenant-scoped dashboard API
 registerAuthRoutes(app);
+registerSsoAuthRoutes(app);
 registerOrganizationRoutes(app);
 // Phase 14: real GitHub App installation-to-organization linking
 registerGitHubInstallationRoutes(app);
@@ -485,13 +740,24 @@ registerSettingsRoutes(app);
 registerPolicyManagementRoutes(app);
 registerOnboardingRoutes(app);
 registerIdentityProviderRoutes(app);
+registerOrganizationDomainRoutes(app);
 registerScimRoutes(app);
+registerReviewRoutes(app);
+registerNotificationRoutes(app);
+registerRemediationRoutes(app);
+registerGovernanceAnalyticsRoutes(app);
+registerPassportRoutes(app);
+registerQueueOperationsRoutes(app);
+registerAssessmentRoutes(app);
+registerBillingRoutes(app);
+registerGitLabRoutes(app);
+registerThirdPartySourceControlRoutes(app);
 
 /** API root */
 app.get("/", (c) => {
   return c.json({
     data: {
-      name: "AI-SDLC Control Plane API",
+      name: "Nomalog API",
       version: "0.1.0",
     },
     error: null,

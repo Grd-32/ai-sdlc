@@ -56,6 +56,8 @@ export const MINIMUM_GITHUB_APP_PERMISSIONS = {
   pull_requests: "read",
   issues: "read",
   checks: "read",
+  security_events: "read",
+  dependabot_alerts: "read",
   repository_hooks: "read",
 } as const satisfies Record<string, GitHubAppPermission>;
 

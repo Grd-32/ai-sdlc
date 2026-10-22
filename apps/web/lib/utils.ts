@@ -49,7 +49,11 @@ export function getApiUrl(): string {
   const isServer = typeof window === "undefined";
 
   if (isServer) {
-    return process.env["API_INTERNAL_URL"] ?? process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
+    return (
+      process.env["API_INTERNAL_URL"] ??
+      process.env["NEXT_PUBLIC_API_URL"] ??
+      "http://localhost:3001"
+    );
   }
 
   return process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";

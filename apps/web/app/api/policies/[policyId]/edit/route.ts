@@ -17,6 +17,7 @@ export async function POST(
   const organizationId = String(formData.get("organizationId") ?? "");
   const name = String(formData.get("name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
+  const mode = String(formData.get("mode") ?? "");
 
   const redirectUrl = new URL("/dashboard/policies", redirectOrigin(request));
 
@@ -25,13 +26,17 @@ export async function POST(
     return NextResponse.redirect(redirectUrl);
   }
 
-  const result = await mutateApi(`/api/organizations/${organizationId}/policies/${policyId}`, "PATCH", {
-    name,
-    description,
-  });
+  const result = await mutateApi(
+    `/api/organizations/${organizationId}/policies/${policyId}`,
+    "PATCH",
+    { name, description, ...(mode ? { mode } : {}) },
+  );
 
   if (!result.ok) {
-    redirectUrl.searchParams.set("policyError", result.error?.message ?? "Failed to update policy.");
+    redirectUrl.searchParams.set(
+      "policyError",
+      result.error?.message ?? "Failed to update policy.",
+    );
   }
 
   return NextResponse.redirect(redirectUrl);

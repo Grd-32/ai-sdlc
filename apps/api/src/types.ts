@@ -5,6 +5,8 @@ export interface AppEnv {
     requestId: string;
     correlationId: string;
     userId: string;
+    authenticationMethod: "GITHUB" | "OIDC" | "SAML";
+    identityProviderId: string | null;
     organizationId: string;
     organizationRole: OrganizationRole;
   };
