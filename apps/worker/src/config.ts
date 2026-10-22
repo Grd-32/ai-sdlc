@@ -11,11 +11,18 @@ export const JOB_TYPES = {
   PASSPORT_REBUILD: "passport.rebuild",
   HEALTH_CHECK: "system.health.check",
   GITHUB_WEBHOOK_EVENT: "github.webhook.event",
+  SOURCE_CONTROL_WEBHOOK_EVENT: "source-control.webhook.event",
+  ASSESSMENT_RUN: "assessment.run",
   RETENTION_CLEANUP: "privacy.retention.cleanup",
+  NOTIFICATION_DELIVER: "notification.deliver",
+  RISK_ACCEPTANCE_EXPIRY: "risk-acceptance.expiry",
+  FINDING_SLA_ESCALATION: "finding.sla.escalation",
 } as const;
 
 export const RETENTION_SCHEDULER_ID = "privacy-retention-cleanup-daily";
 export const RETENTION_SCHEDULER_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const RISK_ACCEPTANCE_EXPIRY_SCHEDULER_ID = "risk-acceptance-expiry-daily";
+export const FINDING_SLA_ESCALATION_SCHEDULER_ID = "finding-sla-escalation-daily";
 
 export const WEBHOOK_STATUS = {
   RECEIVED: "RECEIVED",

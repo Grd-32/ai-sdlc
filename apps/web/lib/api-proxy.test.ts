@@ -42,6 +42,29 @@ describe("proxyApiRequest", () => {
     );
   });
 
+  it("preserves content-disposition for authenticated file downloads", async () => {
+    process.env["API_INTERNAL_URL"] = "http://api:3001";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("report", {
+          status: 200,
+          headers: {
+            "Content-Disposition": 'attachment; filename="report.csv"',
+            "Content-Type": "text/csv; charset=utf-8",
+          },
+        }),
+      ),
+    );
+
+    const request = new NextRequest("https://web.example.test/api/backend/api/report.csv");
+    const response = await proxyApiRequest(request, "/api/report.csv");
+
+    expect(response.headers.get("content-disposition")).toBe('attachment; filename="report.csv"');
+    expect(response.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+    expect(await response.text()).toBe("report");
+  });
+
   it("fails explicitly when the internal API URL is missing", async () => {
     delete process.env["API_INTERNAL_URL"];
     const request = new NextRequest("https://web.example.test/api/auth/github/login");

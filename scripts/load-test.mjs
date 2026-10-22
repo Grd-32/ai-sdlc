@@ -54,13 +54,15 @@ async function performRequest(index) {
 async function run() {
   const workers = [];
   for (let i = 0; i < concurrency; i += 1) {
-    workers.push((async () => {
-      while (queue.length > 0) {
-        const next = queue.shift();
-        if (next === undefined) break;
-        await performRequest(next);
-      }
-    })());
+    workers.push(
+      (async () => {
+        while (queue.length > 0) {
+          const next = queue.shift();
+          if (next === undefined) break;
+          await performRequest(next);
+        }
+      })(),
+    );
   }
 
   await Promise.all(workers);

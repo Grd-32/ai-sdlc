@@ -1,8 +1,30 @@
 import type { NextRequest } from "next/server";
 
-const RESPONSE_HEADERS = ["cache-control", "content-type", "location"] as const;
+const RESPONSE_HEADERS = [
+  "cache-control",
+  "content-disposition",
+  "content-type",
+  "location",
+] as const;
+const FORWARDED_REQUEST_HEADERS = [
+  "accept",
+  "content-type",
+  "cookie",
+  "user-agent",
+  "x-forwarded-for",
+  "x-github-event",
+  "x-github-delivery",
+  "x-hub-signature-256",
+  "x-github-hook-id",
+  "x-github-hook-installation-target-id",
+  "x-github-hook-installation-target-type",
+] as const;
 
-export async function proxyApiRequest(request: NextRequest, apiPath: string): Promise<Response> {
+export async function proxyApiRequest(
+  request: NextRequest,
+  apiPath: string,
+  additionalHeaders: readonly string[] = [],
+): Promise<Response> {
   const apiBaseUrl = process.env["API_INTERNAL_URL"];
   if (!apiBaseUrl) {
     throw new Error("API_INTERNAL_URL is required for same-origin API proxy routes");
@@ -12,7 +34,7 @@ export async function proxyApiRequest(request: NextRequest, apiPath: string): Pr
   target.search = request.nextUrl.search;
 
   const requestHeaders = new Headers();
-  for (const header of ["accept", "content-type", "cookie", "user-agent", "x-forwarded-for"]) {
+  for (const header of new Set([...FORWARDED_REQUEST_HEADERS, ...additionalHeaders])) {
     const value = request.headers.get(header);
     if (value) {
       requestHeaders.set(header, value);

@@ -8,8 +8,12 @@ FROM base AS deps
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/db/package.json ./packages/db/
+COPY packages/billing/package.json ./packages/billing/
 COPY packages/github/package.json ./packages/github/
+COPY packages/policy/package.json ./packages/policy/
 COPY packages/provenance/package.json ./packages/provenance/
+COPY packages/risk/package.json ./packages/risk/
+COPY packages/source-control/package.json ./packages/source-control/
 COPY scripts/run-with-env.mjs ./scripts/run-with-env.mjs
 COPY packages/db/prisma/schema.prisma ./packages/db/prisma/schema.prisma
 RUN pnpm install --frozen-lockfile
@@ -18,14 +22,22 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
+COPY --from=deps /app/packages/billing/node_modules ./packages/billing/node_modules
 COPY --from=deps /app/packages/github/node_modules ./packages/github/node_modules
+COPY --from=deps /app/packages/policy/node_modules ./packages/policy/node_modules
 COPY --from=deps /app/packages/provenance/node_modules ./packages/provenance/node_modules
+COPY --from=deps /app/packages/risk/node_modules ./packages/risk/node_modules
+COPY --from=deps /app/packages/source-control/node_modules ./packages/source-control/node_modules
 COPY . .
 
 RUN pnpm --filter @ai-sdlc/db generate
 RUN pnpm --filter @ai-sdlc/db build
+RUN pnpm --filter @ai-sdlc/billing build
 RUN pnpm --filter @ai-sdlc/github build
+RUN pnpm --filter @ai-sdlc/risk build
+RUN pnpm --filter @ai-sdlc/policy build
 RUN pnpm --filter @ai-sdlc/provenance build
+RUN pnpm --filter @ai-sdlc/source-control build
 RUN pnpm --filter @ai-sdlc/api build
 
 FROM base AS runner
@@ -41,12 +53,24 @@ COPY --from=builder /app/packages/db/dist ./packages/db/dist
 COPY --from=builder /app/packages/db/package.json ./packages/db/
 COPY --from=builder /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=builder /app/packages/db/prisma ./packages/db/prisma
+COPY --from=builder /app/packages/billing/dist ./packages/billing/dist
+COPY --from=builder /app/packages/billing/package.json ./packages/billing/
+COPY --from=builder /app/packages/billing/node_modules ./packages/billing/node_modules
 COPY --from=builder /app/packages/github/dist ./packages/github/dist
 COPY --from=builder /app/packages/github/package.json ./packages/github/
 COPY --from=builder /app/packages/github/node_modules ./packages/github/node_modules
+COPY --from=builder /app/packages/policy/dist ./packages/policy/dist
+COPY --from=builder /app/packages/policy/package.json ./packages/policy/
+COPY --from=builder /app/packages/policy/node_modules ./packages/policy/node_modules
 COPY --from=builder /app/packages/provenance/dist ./packages/provenance/dist
 COPY --from=builder /app/packages/provenance/package.json ./packages/provenance/
 COPY --from=builder /app/packages/provenance/node_modules ./packages/provenance/node_modules
+COPY --from=builder /app/packages/risk/dist ./packages/risk/dist
+COPY --from=builder /app/packages/risk/package.json ./packages/risk/
+COPY --from=builder /app/packages/risk/node_modules ./packages/risk/node_modules
+COPY --from=builder /app/packages/source-control/dist ./packages/source-control/dist
+COPY --from=builder /app/packages/source-control/package.json ./packages/source-control/
+COPY --from=builder /app/packages/source-control/node_modules ./packages/source-control/node_modules
 
 WORKDIR /app/apps/api
 EXPOSE 3001

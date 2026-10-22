@@ -302,16 +302,19 @@ export async function githubApiRequest<T>(
   const token = await getInstallationAccessToken(githubInstallationId);
   const config = getGitHubAppConfig();
   const baseUrl = config.baseUrl ?? "https://api.github.com";
+  const headers = new Headers({
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "Content-Type": "application/json",
+  });
+  new Headers(init.headers).forEach((value, name) => {
+    headers.set(name, value);
+  });
 
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -335,7 +338,78 @@ export interface GitHubPullRequestFile {
   deletions: number;
   changes: number;
   sha?: string;
+  patch?: string;
 }
+
+export interface GitHubPullRequestCommit {
+  sha: string;
+  commit: { message: string };
+}
+
+export interface GitHubPullRequestSummary {
+  id: number;
+  number: number;
+  title: string;
+  state: string;
+  created_at: string;
+  updated_at: string;
+  merged_at: string | null;
+  user: { login: string } | null;
+  head: { sha: string; ref: string } | null;
+  base: { ref: string } | null;
+  additions: number;
+  deletions: number;
+  changed_files: number;
+}
+
+export interface GitHubPullRequestReview {
+  id: number;
+  user: { login: string } | null;
+  state: string;
+  submitted_at: string | null;
+  commit_id: string | null;
+}
+
+export interface GitHubSecretScanningAlert {
+  number: number;
+  html_url: string;
+  state: string;
+  secret_type: string;
+  secret_type_display_name: string;
+  created_at: string;
+  updated_at: string;
+  resolution: string | null;
+}
+
+export interface GitHubCodeScanningAlert {
+  number: number;
+  html_url: string;
+  state: string;
+  title: string;
+  severity: string | null;
+  file: string | null;
+  line: number | null;
+}
+
+export interface GitHubDependabotAlert {
+  number: number;
+  html_url: string;
+  state: string;
+  packageName: string;
+  manifestPath: string | null;
+  summary: string;
+  severity: string | null;
+  createdAt: string | null;
+}
+
+export type GitHubBranchProtection =
+  | {
+      status: "AVAILABLE";
+      requiredApprovals: number;
+      requiredChecks: string[];
+      enforceAdmins: boolean;
+    }
+  | { status: "UNKNOWN"; reason: string };
 
 export interface GitHubInstallationRepository {
   id: number;
@@ -344,6 +418,229 @@ export interface GitHubInstallationRepository {
   owner: { login: string } | null;
   default_branch?: string | null;
   private?: boolean;
+}
+
+/** Reads bounded repository PR history. The caller applies its fixed time window. */
+export async function listRepositoryPullRequests(
+  githubInstallationId: string,
+  owner: string,
+  repo: string,
+): Promise<GitHubPullRequestSummary[]> {
+  const pullRequests: GitHubPullRequestSummary[] = [];
+  const perPage = 100;
+  const maxPages = 30;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const pagePullRequests = await githubApiRequest<GitHubPullRequestSummary[]>(
+      githubInstallationId,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?state=all&sort=updated&direction=desc&per_page=${perPage}&page=${page}`,
+    );
+    pullRequests.push(...pagePullRequests);
+
+    if (pagePullRequests.length < perPage) {
+      return pullRequests;
+    }
+  }
+
+  throw new Error(
+    `GitHub returned the maximum ${perPage * maxPages} pull requests for ${owner}/${repo}; refusing to claim complete history`,
+  );
+}
+
+export async function listPullRequestReviews(
+  githubInstallationId: string,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<GitHubPullRequestReview[]> {
+  const reviews: GitHubPullRequestReview[] = [];
+  const perPage = 100;
+  const maxPages = 20;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const pageReviews = await githubApiRequest<GitHubPullRequestReview[]>(
+      githubInstallationId,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${pullNumber}/reviews?per_page=${perPage}&page=${page}`,
+    );
+    reviews.push(...pageReviews);
+    if (pageReviews.length < perPage) {
+      return reviews;
+    }
+  }
+
+  throw new Error(
+    `GitHub returned the maximum ${perPage * maxPages} reviews for ${owner}/${repo}#${pullNumber}; refusing incomplete review coverage`,
+  );
+}
+
+/** Read open repository secret-scanning alerts without retaining the secret value. */
+export async function listGitHubSecretScanningAlerts(
+  githubInstallationId: string,
+  owner: string,
+  repo: string,
+): Promise<GitHubSecretScanningAlert[]> {
+  const alerts: GitHubSecretScanningAlert[] = [];
+  const perPage = 100;
+  const maxPages = 20;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const pageAlerts = await githubApiRequest<GitHubSecretScanningAlert[]>(
+      githubInstallationId,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/secret-scanning/alerts?state=open&per_page=${perPage}&page=${page}`,
+    );
+    alerts.push(
+      ...pageAlerts.map((alert) => ({
+        number: alert.number,
+        html_url: alert.html_url,
+        state: alert.state,
+        secret_type: alert.secret_type,
+        secret_type_display_name: alert.secret_type_display_name,
+        created_at: alert.created_at,
+        updated_at: alert.updated_at,
+        resolution: alert.resolution,
+      })),
+    );
+    if (pageAlerts.length < perPage) {
+      return alerts;
+    }
+  }
+  throw new Error(
+    `GitHub returned the maximum ${perPage * maxPages} secret-scanning alerts for ${owner}/${repo}; refusing incomplete results`,
+  );
+}
+
+/** Read bounded open Code Scanning alerts; alert payloads are reduced to report-safe fields. */
+export async function listGitHubCodeScanningAlerts(
+  githubInstallationId: string,
+  owner: string,
+  repo: string,
+): Promise<GitHubCodeScanningAlert[]> {
+  const alerts: GitHubCodeScanningAlert[] = [];
+  const perPage = 100;
+  const maxPages = 20;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const pageAlerts = await githubApiRequest<
+      Array<{
+        number: number;
+        html_url: string;
+        state: string;
+        rule?: { description?: string; name?: string; security_severity_level?: string };
+        most_recent_instance?: {
+          location?: { path?: string; start_line?: number };
+        };
+      }>
+    >(
+      githubInstallationId,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/code-scanning/alerts?state=open&per_page=${perPage}&page=${page}`,
+    );
+    alerts.push(
+      ...pageAlerts.map((alert) => ({
+        number: alert.number,
+        html_url: alert.html_url,
+        state: alert.state,
+        title: alert.rule?.description ?? alert.rule?.name ?? "Code scanning alert",
+        severity: alert.rule?.security_severity_level ?? null,
+        file: alert.most_recent_instance?.location?.path ?? null,
+        line: alert.most_recent_instance?.location?.start_line ?? null,
+      })),
+    );
+    if (pageAlerts.length < perPage) return alerts;
+  }
+  throw new Error(
+    `GitHub returned the maximum ${perPage * maxPages} Code Scanning alerts for ${owner}/${repo}; refusing incomplete results`,
+  );
+}
+
+/** Read bounded open Dependabot alerts without retaining unnecessary advisory payload. */
+export async function listGitHubDependabotAlerts(
+  githubInstallationId: string,
+  owner: string,
+  repo: string,
+): Promise<GitHubDependabotAlert[]> {
+  const alerts: GitHubDependabotAlert[] = [];
+  const perPage = 100;
+  const maxPages = 20;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const pageAlerts = await githubApiRequest<
+      Array<{
+        number: number;
+        html_url: string;
+        state: string;
+        created_at?: string;
+        dependency?: { package?: { name?: string }; manifest_path?: string };
+        security_advisory?: { summary?: string; severity?: string };
+        security_vulnerability?: { severity?: string };
+      }>
+    >(
+      githubInstallationId,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/dependabot/alerts?state=open&per_page=${perPage}&page=${page}`,
+    );
+    alerts.push(
+      ...pageAlerts.map((alert) => ({
+        number: alert.number,
+        html_url: alert.html_url,
+        state: alert.state,
+        packageName: alert.dependency?.package?.name ?? "Unknown package",
+        manifestPath: alert.dependency?.manifest_path ?? null,
+        summary: alert.security_advisory?.summary ?? "Dependency vulnerability",
+        severity:
+          alert.security_vulnerability?.severity ?? alert.security_advisory?.severity ?? null,
+        createdAt: alert.created_at ?? null,
+      })),
+    );
+    if (pageAlerts.length < perPage) return alerts;
+  }
+  throw new Error(
+    `GitHub returned the maximum ${perPage * maxPages} Dependabot alerts for ${owner}/${repo}; refusing incomplete results`,
+  );
+}
+
+export async function getGitHubBranchProtection(
+  githubInstallationId: string,
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<GitHubBranchProtection> {
+  const path =
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches/` +
+    `${encodeURIComponent(branch)}/protection`;
+  try {
+    const protection = await githubApiRequest<{
+      required_pull_request_reviews?: { required_approving_review_count?: number };
+      required_status_checks?: { contexts?: string[]; checks?: Array<{ context?: string }> };
+      enforce_admins?: { enabled?: boolean };
+    }>(githubInstallationId, path);
+    return {
+      status: "AVAILABLE",
+      requiredApprovals:
+        protection.required_pull_request_reviews?.required_approving_review_count ?? 0,
+      requiredChecks: [
+        ...(protection.required_status_checks?.contexts ?? []),
+        ...(protection.required_status_checks?.checks ?? [])
+          .map((check) => check.context)
+          .filter((context): context is string => Boolean(context)),
+      ],
+      enforceAdmins: protection.enforce_admins?.enabled ?? false,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "GitHub request failed";
+    if (/\(404\b/.test(message)) {
+      return {
+        status: "UNKNOWN",
+        reason: "GitHub returned 404; branch protection may be absent or not visible to this App.",
+      };
+    }
+    if (/\(403\b/.test(message)) {
+      return {
+        status: "UNKNOWN",
+        reason:
+          "The GitHub App cannot read branch-protection settings with its current permissions.",
+      };
+    }
+    throw error;
+  }
 }
 
 /** List every repository currently available to an installation, with a bounded pagination loop. */
@@ -393,6 +690,7 @@ export async function listPullRequestFiles(
         deletions: number;
         changes: number;
         sha?: string;
+        patch?: string;
       }>
     >(
       githubInstallationId,
@@ -408,6 +706,34 @@ export async function listPullRequestFiles(
   }
 
   return files;
+}
+
+/** List PR commits so explicit AI provenance trailers can be checked without guessing from code. */
+export async function listPullRequestCommits(
+  githubInstallationId: string,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<GitHubPullRequestCommit[]> {
+  const commits: GitHubPullRequestCommit[] = [];
+  const perPage = 100;
+  const maxPages = 20;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const pageCommits = await githubApiRequest<GitHubPullRequestCommit[]>(
+      githubInstallationId,
+      `/repos/${owner}/${repo}/pulls/${pullNumber}/commits?per_page=${perPage}&page=${page}`,
+    );
+    commits.push(...pageCommits);
+
+    if (pageCommits.length < perPage) {
+      return commits;
+    }
+  }
+
+  throw new Error(
+    `Pull request ${owner}/${repo}#${pullNumber} has more than ${perPage * maxPages} commits; refusing incomplete provenance analysis`,
+  );
 }
 
 export interface GitHubInstallationDetails {

@@ -10,6 +10,7 @@ import {
   buildOrganizationScope,
   isOrganizationMember,
   ensureOrganizationAccess,
+  OrganizationAccessError,
   buildRetentionCutoff,
   pruneExpiredSessions,
   pruneExpiredWebhookEvents,
@@ -29,7 +30,6 @@ import {
 } from "./index.js";
 
 type OrganizationAccessPrisma = Parameters<typeof ensureOrganizationAccess>[0]["prisma"];
-type RetentionPrisma = Parameters<typeof pruneExpiredWebhookEvents>[0]["prisma"];
 
 describe("@ai-sdlc/db", () => {
   it("exports prisma client", async () => {
@@ -68,6 +68,35 @@ describe("@ai-sdlc/db", () => {
         organizationId: "org-b",
       }),
     ).rejects.toThrow("not a member of the requested organization");
+  });
+
+  it("uses a typed authorization error so infrastructure errors are not mistaken for denials", async () => {
+    const prismaClient = {
+      organizationMember: {
+        findFirst: vi.fn().mockRejectedValue(new Error("database unavailable")),
+      },
+    } as unknown as OrganizationAccessPrisma;
+
+    await expect(
+      ensureOrganizationAccess({
+        prisma: prismaClient,
+        userId: "user-1",
+        organizationId: "org-a",
+      }),
+    ).rejects.toThrow("database unavailable");
+
+    const deniedClient = {
+      organizationMember: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    } as unknown as OrganizationAccessPrisma;
+    await expect(
+      ensureOrganizationAccess({
+        prisma: deniedClient,
+        userId: "user-1",
+        organizationId: "org-a",
+      }),
+    ).rejects.toBeInstanceOf(OrganizationAccessError);
   });
 
   it("allows access when the user has the required role in the organization", async () => {
@@ -115,41 +144,49 @@ describe("@ai-sdlc/db", () => {
   });
 
   it("purges expired sessions and stale webhook deliveries using the retention cutoff", async () => {
-    const sessionDeleteMany = vi.fn().mockResolvedValue({ count: 2 });
-    const webhookDeleteMany = vi.fn().mockResolvedValue({ count: 5 });
+    const sessionDeleteMany = vi
+      .fn<(args: { where: { OR: unknown[] } }) => Promise<{ count: number }>>()
+      .mockResolvedValue({ count: 2 });
+    const webhookDeleteMany = vi
+      .fn<
+        (args: {
+          where: { createdAt?: { lt: Date }; status?: { in: string[] } };
+        }) => Promise<{ count: number }>
+      >()
+      .mockResolvedValue({ count: 5 });
 
     const now = new Date("2026-10-07T12:00:00.000Z");
     const sessionCount = await pruneExpiredSessions({
       prisma: {
         session: { deleteMany: sessionDeleteMany },
-      } as any,
+      },
       now,
       maxAgeDays: 30,
     });
     const webhookCount = await pruneExpiredWebhookEvents({
       prisma: {
         gitHubWebhookEvent: { deleteMany: webhookDeleteMany },
-      } as any,
+      },
       now,
       maxAgeDays: 90,
     });
 
     expect(sessionCount).toBe(2);
     expect(webhookCount).toBe(5);
-    expect(sessionDeleteMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          OR: expect.arrayContaining([
-            expect.objectContaining({ expiresAt: { lt: new Date("2026-09-07T12:00:00.000Z") } }),
-          ]),
-        }),
-      }),
-    );
-    expect(webhookDeleteMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ createdAt: { lt: new Date("2026-07-09T12:00:00.000Z") } }),
-      }),
-    );
+    expect(sessionDeleteMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { expiresAt: { lt: new Date("2026-09-07T12:00:00.000Z") } },
+          { revokedAt: { not: null, lt: new Date("2026-09-07T12:00:00.000Z") } },
+        ],
+      },
+    });
+    expect(webhookDeleteMany).toHaveBeenCalledWith({
+      where: {
+        createdAt: { lt: new Date("2026-07-09T12:00:00.000Z") },
+        status: { in: ["COMPLETED", "FAILED", "DLQ"] },
+      },
+    });
   });
 
   it("applies per-organization webhook retention overrides and keeps global defaults elsewhere", async () => {
@@ -157,7 +194,7 @@ describe("@ai-sdlc/db", () => {
     const now = new Date("2026-10-07T12:00:00.000Z");
 
     const count = await pruneExpiredWebhookEvents({
-      prisma: { gitHubWebhookEvent: { deleteMany } } as unknown as RetentionPrisma,
+      prisma: { gitHubWebhookEvent: { deleteMany } },
       maxAgeDays: 90,
       now,
       organizationOverrides: [
@@ -202,7 +239,7 @@ describe("@ai-sdlc/db", () => {
       prisma: {
         gitHubWebhookEvent: { deleteMany: webhookDeleteMany },
         auditEvent: { deleteMany: auditDeleteMany },
-      } as unknown as RetentionPrisma,
+      },
       maxAgeDays: 90,
       now: new Date("2026-10-07T12:00:00.000Z"),
     });
@@ -221,7 +258,7 @@ describe("@ai-sdlc/db", () => {
     const deleteMany = vi.fn();
     await expect(
       pruneExpiredWebhookEvents({
-        prisma: { gitHubWebhookEvent: { deleteMany } } as unknown as RetentionPrisma,
+        prisma: { gitHubWebhookEvent: { deleteMany } },
         organizationOverrides: [{ organizationId: "org-a", maxAgeDays: -1 }],
       }),
     ).rejects.toThrow("retention override maxAgeDays must be an integer between 1 and 3650");
@@ -234,7 +271,7 @@ describe("@ai-sdlc/db", () => {
     });
 
     const serviceAccount = await createServiceAccount({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       name: "deployment-bot",
       description: "CI deployment automation",
@@ -242,7 +279,7 @@ describe("@ai-sdlc/db", () => {
     });
 
     const { secret, apiKey } = await createApiKey({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       serviceAccountId: serviceAccount.id,
       name: "deployment-bot-key",
@@ -252,17 +289,13 @@ describe("@ai-sdlc/db", () => {
     expect(secret.length).toBeGreaterThan(32);
     expect(apiKey.keyHash).toBeTruthy();
     expect(apiKey.organizationId).toBe(organization.id);
-    expect(
-      await verifyApiKey({ prisma: prisma as any, organizationId: organization.id, secret }),
-    ).toBeTruthy();
+    expect(await verifyApiKey({ prisma, organizationId: organization.id, secret })).toBeTruthy();
 
     await prisma.serviceAccount.update({
       where: { id: serviceAccount.id },
       data: { active: false },
     });
-    expect(
-      await verifyApiKey({ prisma: prisma as any, organizationId: organization.id, secret }),
-    ).toBe(false);
+    expect(await verifyApiKey({ prisma, organizationId: organization.id, secret })).toBe(false);
 
     await prisma.organization.delete({ where: { id: organization.id } });
   });
@@ -273,7 +306,7 @@ describe("@ai-sdlc/db", () => {
     });
 
     const policy = await createPolicy({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       name: "Production guardrail",
       description: "Safe default mode before enforcement",
@@ -284,7 +317,7 @@ describe("@ai-sdlc/db", () => {
     expect(policy.mode).toBe("DRY_RUN");
 
     const updated = await updatePolicyMode({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       policyId: policy.id,
       mode: "ENFORCING",
@@ -301,14 +334,14 @@ describe("@ai-sdlc/db", () => {
     });
 
     const provider = await registerAIProvider({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       name: "OpenAI",
       status: "APPROVED",
     });
 
     const agent = await registerAIAgent({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       providerId: provider.id,
       name: "Claude Code",
@@ -316,7 +349,7 @@ describe("@ai-sdlc/db", () => {
     });
 
     const model = await registerAIModel({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       providerId: provider.id,
       name: "gpt-4o-mini",
@@ -329,7 +362,7 @@ describe("@ai-sdlc/db", () => {
     expect(model.name).toBe("gpt-4o-mini");
     expect(
       await getAIApprovalStatus({
-        prisma: prisma as any,
+        prisma,
         organizationId: organization.id,
         providerName: provider.name,
         agentName: agent.name,
@@ -346,7 +379,7 @@ describe("@ai-sdlc/db", () => {
     });
 
     const component = await registerSBOMComponent({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       name: "left-pad",
       version: null,
@@ -355,7 +388,7 @@ describe("@ai-sdlc/db", () => {
     });
 
     const acceptance = await recordRiskAcceptance({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       componentId: component.id,
       acceptedBy: "security-team",
@@ -378,7 +411,7 @@ describe("@ai-sdlc/db", () => {
     });
 
     const event = await recordObservabilityEvent({
-      prisma: prisma as any,
+      prisma: prisma,
       organizationId: organization.id,
       service: "api",
       level: "INFO",

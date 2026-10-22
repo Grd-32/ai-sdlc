@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  inferAIProvenanceFromPullRequest,
-  PROVENANCE_PACKAGE_VERSION,
-} from "./index.js";
+import { inferAIProvenanceFromPullRequest, PROVENANCE_PACKAGE_VERSION } from "./index.js";
 
 describe("@ai-sdlc/provenance", () => {
   it("exports package version", () => {
@@ -23,7 +20,7 @@ describe("@ai-sdlc/provenance", () => {
     expect(result.evidence[0]?.reason).toContain("Developer declaration");
   });
 
-  it("returns UNKNOWN when no provenance signal is present", () => {
+  it("returns UNKNOWN with no confidence when no provenance signal is present", () => {
     const result = inferAIProvenanceFromPullRequest({
       title: "Fix login redirect",
       body: "This PR updates the auth flow and fixes an edge case.",
@@ -31,7 +28,73 @@ describe("@ai-sdlc/provenance", () => {
 
     expect(result.involvement).toBe("UNKNOWN");
     expect(result.source).toBe("UNKNOWN");
-    expect(result.confidence).toBe(0.5);
+    expect(result.confidence).toBe(0);
     expect(result.agentName).toBeUndefined();
+  });
+
+  it("does not treat ordinary use of the word assistant as AI provenance", () => {
+    const result = inferAIProvenanceFromPullRequest({
+      title: "Update the account assistant screen",
+      body: "Improve the keyboard navigation and layout.",
+    });
+
+    expect(result.involvement).toBe("UNKNOWN");
+    expect(result.agentName).toBeUndefined();
+  });
+
+  it("recognizes a known AI coding agent from GitHub bot metadata", () => {
+    const result = inferAIProvenanceFromPullRequest({
+      title: "Implement pagination",
+      user: { login: "copilot-swe-agent[bot]", type: "Bot" },
+    });
+
+    expect(result).toMatchObject({
+      involvement: "YES",
+      agentName: "GitHub Copilot",
+      confidence: 0.99,
+      source: "GIT_METADATA",
+    });
+  });
+
+  it("does not classify unrelated automation bots as AI coding agents", () => {
+    const result = inferAIProvenanceFromPullRequest({
+      title: "Bump dependency",
+      user: { login: "dependabot[bot]", type: "Bot" },
+    });
+
+    expect(result.involvement).toBe("UNKNOWN");
+    expect(result.agentName).toBeUndefined();
+  });
+
+  it("does not treat a human username containing an agent name as trusted metadata", () => {
+    const result = inferAIProvenanceFromPullRequest({
+      title: "Fix authentication flow",
+      user: { login: "copilot", type: "User" },
+    });
+
+    expect(result.involvement).toBe("UNKNOWN");
+  });
+
+  it("recognizes an explicit Copilot commit trailer", () => {
+    const result = inferAIProvenanceFromPullRequest({
+      title: "Refactor authentication flow",
+      commitMessages: ["Refactor login token handling\n\nAI-Assisted-By: GitHub Copilot"],
+    });
+
+    expect(result).toMatchObject({
+      involvement: "YES",
+      agentName: "GitHub Copilot",
+      confidence: 0.98,
+      source: "GIT_METADATA",
+    });
+  });
+
+  it("does not infer Copilot use from an unstructured commit mention", () => {
+    const result = inferAIProvenanceFromPullRequest({
+      title: "Refactor authentication flow",
+      commitMessages: ["Discussed the implementation with Copilot."],
+    });
+
+    expect(result.involvement).toBe("UNKNOWN");
   });
 });

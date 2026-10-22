@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document captures the current baseline capacity assumptions for the AI-SDLC control plane and defines the minimum sizing evidence needed before a production pilot.
+This document captures the current baseline capacity assumptions for the Nomalog governance platform and defines the minimum sizing evidence needed before a production pilot.
 
 ## Current architecture assumptions
 

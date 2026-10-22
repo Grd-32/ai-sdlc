@@ -38,9 +38,27 @@ describe("server-side sessions", () => {
   });
 
   it("stores only a token hash and gives the caller the opaque token", async () => {
-    let storedData: { userId: string; tokenHash: string; expiresAt: Date } | undefined;
+    let storedData:
+      | {
+          userId: string;
+          tokenHash: string;
+          expiresAt: Date;
+          authenticationMethod: string;
+          identityProviderId?: string;
+        }
+      | undefined;
     prismaMocks.sessionCreate.mockImplementation(
-      ({ data }: { data: { userId: string; tokenHash: string; expiresAt: Date } }) => {
+      ({
+        data,
+      }: {
+        data: {
+          userId: string;
+          tokenHash: string;
+          expiresAt: Date;
+          authenticationMethod: string;
+          identityProviderId?: string;
+        };
+      }) => {
         storedData = data;
         return Promise.resolve({ id: "session-1", tokenHash: data.tokenHash });
       },
@@ -53,6 +71,7 @@ describe("server-side sessions", () => {
     expect(storedData?.userId).toBe("user-1");
     expect(storedData?.tokenHash).toMatch(/^[a-f0-9]{64}$/);
     expect(storedData?.expiresAt).toEqual(new Date("2026-10-16T12:00:00.000Z"));
+    expect(storedData?.authenticationMethod).toBe("GITHUB");
     expect(storedData?.tokenHash).not.toBe(token);
   });
 
@@ -93,12 +112,16 @@ describe("server-side sessions", () => {
       userId: "user-1",
       expiresAt: new Date(Date.now() + 60_000),
       revokedAt: null,
+      authenticationMethod: "OIDC",
+      identityProviderId: "idp-1",
     });
     prismaMocks.userFindUnique.mockResolvedValue({ active: true });
 
     await expect(verifySessionToken("valid-token")).resolves.toEqual({
       sessionId: "session-1",
       userId: "user-1",
+      authenticationMethod: "OIDC",
+      identityProviderId: "idp-1",
     });
   });
 

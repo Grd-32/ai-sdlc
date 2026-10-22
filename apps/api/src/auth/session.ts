@@ -19,11 +19,18 @@ export { SESSION_TTL_SECONDS };
 
 export interface SessionPayload {
   userId: string;
+  authenticationMethod: "GITHUB" | "OIDC" | "SAML";
+  identityProviderId: string | null;
 }
 
 export async function createSessionCookieValue(
   userId: string,
-  meta?: { ipAddress?: string; userAgent?: string },
+  meta?: {
+    ipAddress?: string;
+    userAgent?: string;
+    authenticationMethod?: "GITHUB" | "OIDC" | "SAML";
+    identityProviderId?: string;
+  },
 ): Promise<string> {
   const { token } = await createSession({ userId, ...meta });
   return token;
@@ -36,10 +43,16 @@ export async function verifySessionCookieValue(
   if (!session) {
     return null;
   }
-  return { userId: session.userId };
+  return {
+    userId: session.userId,
+    authenticationMethod: session.authenticationMethod,
+    identityProviderId: session.identityProviderId,
+  };
 }
 
-export async function revokeSessionCookieValue(cookieValue: string | undefined | null): Promise<void> {
+export async function revokeSessionCookieValue(
+  cookieValue: string | undefined | null,
+): Promise<void> {
   if (cookieValue) {
     await revokeSession(cookieValue);
   }

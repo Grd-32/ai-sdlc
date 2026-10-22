@@ -19,11 +19,22 @@ export async function POST(
   const riskAtLeastRaw = String(formData.get("riskAtLeast") ?? "").trim();
   const reason = String(formData.get("reason") ?? "").trim();
   const requiredApprovalsRaw = String(formData.get("requiredApprovals") ?? "").trim();
+  const conditionExpressionRaw = String(formData.get("conditionExpression") ?? "").trim();
 
   const sensitiveAreas = formData.getAll("sensitiveAreas").map(String);
   const repositoryCriticalityIn = formData.getAll("repositoryCriticalityIn").map(String);
 
   const redirectUrl = new URL("/dashboard/policies", redirectOrigin(request));
+  let conditionExpression: unknown = null;
+
+  if (conditionExpressionRaw) {
+    try {
+      conditionExpression = JSON.parse(conditionExpressionRaw);
+    } catch {
+      redirectUrl.searchParams.set("policyError", "Condition expression must be valid JSON.");
+      return NextResponse.redirect(redirectUrl);
+    }
+  }
 
   if (!organizationId || !name || !action) {
     redirectUrl.searchParams.set("policyError", "Rule name and action are required.");
@@ -36,11 +47,18 @@ export async function POST(
     action,
     sensitiveAreas,
     repositoryCriticalityIn,
+    conditionExpression,
     aiInvolved: aiInvolvedRaw === "true" ? true : aiInvolvedRaw === "false" ? false : undefined,
-    riskAtLeast: riskAtLeastRaw && Number.isFinite(Number(riskAtLeastRaw)) ? Number(riskAtLeastRaw) : undefined,
+    riskAtLeast:
+      riskAtLeastRaw && Number.isFinite(Number(riskAtLeastRaw))
+        ? Number(riskAtLeastRaw)
+        : undefined,
     reason: reason || undefined,
     requiredApprovals: requiredApprovalsRaw
-      ? requiredApprovalsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      ? requiredApprovalsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
       : [],
   };
 

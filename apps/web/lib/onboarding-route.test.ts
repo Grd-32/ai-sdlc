@@ -35,7 +35,9 @@ describe("organization onboarding route", () => {
     expect(new Headers(options.headers).get("cookie")).toBe("ai_sdlc_session=session-token");
     expect(options.body).toBe(JSON.stringify({ name: "Example Org" }));
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe("https://web.example.test/dashboard");
+    expect(response.headers.get("location")).toBe(
+      "https://web.example.test/dashboard?organization=created",
+    );
     expect(response.headers.getSetCookie().join(";")).toContain("ai_sdlc_selected_org=org-123");
     expect(response.headers.getSetCookie().join(";")).toContain("Secure");
   });

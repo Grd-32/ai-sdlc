@@ -22,6 +22,8 @@ export interface CreateSessionParams {
   userId: string;
   ipAddress?: string;
   userAgent?: string;
+  authenticationMethod?: "GITHUB" | "OIDC" | "SAML";
+  identityProviderId?: string;
   ttlSeconds?: number;
 }
 
@@ -39,6 +41,8 @@ export async function createSession(
       expiresAt,
       ipAddress: params.ipAddress,
       userAgent: params.userAgent,
+      authenticationMethod: params.authenticationMethod ?? "GITHUB",
+      identityProviderId: params.identityProviderId,
     },
   });
 
@@ -48,6 +52,8 @@ export async function createSession(
 export interface ValidSession {
   sessionId: string;
   userId: string;
+  authenticationMethod: "GITHUB" | "OIDC" | "SAML";
+  identityProviderId: string | null;
 }
 
 /** Returns null if token is invalid, expired, or revoked. */
@@ -60,7 +66,14 @@ export async function verifySessionToken(
 
   const session = await prisma.session.findUnique({
     where: { tokenHash: hashToken(token) },
-    select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+    select: {
+      id: true,
+      userId: true,
+      expiresAt: true,
+      revokedAt: true,
+      authenticationMethod: true,
+      identityProviderId: true,
+    },
   });
 
   if (!session || session.revokedAt) {
@@ -80,7 +93,17 @@ export async function verifySessionToken(
     return null;
   }
 
-  return { sessionId: session.id, userId: session.userId };
+  const authenticationMethod =
+    session.authenticationMethod === "OIDC" || session.authenticationMethod === "SAML"
+      ? session.authenticationMethod
+      : "GITHUB";
+
+  return {
+    sessionId: session.id,
+    userId: session.userId,
+    authenticationMethod,
+    identityProviderId: session.identityProviderId ?? null,
+  };
 }
 
 export async function revokeSession(token: string): Promise<void> {

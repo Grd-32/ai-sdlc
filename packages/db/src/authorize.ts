@@ -30,6 +30,8 @@ export const ROLE_PRIORITY: Record<OrganizationRole, number> = {
   SECURITY_ADMIN: 7,
   SECURITY_ANALYST: 6,
   ENGINEER: 5,
+  SENIOR_ENGINEER: 5,
+  PLATFORM_ENGINEER: 5,
   REVIEWER: 4,
   AUDITOR: 3,
   VIEWER: 2,
@@ -101,11 +103,16 @@ export interface AuthorizeParams {
 }
 
 export interface AuthorizeResult {
-  allowed: boolean;
-  reason?: string;
+  allowed: true;
+  reason?: never;
 }
 
-export function authorize(params: AuthorizeParams): AuthorizeResult {
+export interface DeniedAuthorizationResult {
+  allowed: false;
+  reason: string;
+}
+
+export function authorize(params: AuthorizeParams): AuthorizeResult | DeniedAuthorizationResult {
   const rule = PERMISSIONS.find(
     (r) => r.resource === params.resource && r.action === params.action,
   );

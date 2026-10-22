@@ -21,12 +21,19 @@ export async function POST(
     return NextResponse.redirect(redirectUrl);
   }
 
-  const result = await mutateApi(`/api/organizations/${organizationId}/policies/${policyId}`, "PATCH", {
-    enabled,
-  });
+  const result = await mutateApi(
+    `/api/organizations/${organizationId}/policies/${policyId}`,
+    "PATCH",
+    {
+      enabled,
+    },
+  );
 
   if (!result.ok) {
-    redirectUrl.searchParams.set("policyError", result.error?.message ?? "Failed to update policy.");
+    redirectUrl.searchParams.set(
+      "policyError",
+      result.error?.message ?? "Failed to update policy.",
+    );
   }
 
   return NextResponse.redirect(redirectUrl);

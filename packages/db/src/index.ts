@@ -163,7 +163,7 @@
 //   }
 // }
 import { createHash, randomBytes } from "node:crypto";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { ROLE_PRIORITY as AUTH_ROLE_PRIORITY, normalizeRole } from "./authorize.js";
 
 export type OrganizationRole =
@@ -173,6 +173,8 @@ export type OrganizationRole =
   | "SECURITY_ADMIN"
   | "SECURITY_ANALYST"
   | "ENGINEER"
+  | "SENIOR_ENGINEER"
+  | "PLATFORM_ENGINEER"
   | "REVIEWER"
   | "VIEWER"
   | "AUDITOR";
@@ -210,8 +212,10 @@ if (process.env["NODE_ENV"] !== "production") {
   globalForPrisma.prisma = prisma;
 }
 
-export { PrismaClient };
+export { Prisma, PrismaClient };
 export type { SystemHealth } from "@prisma/client";
+export { getPolicyEnforcementApprovalStatuses } from "./policy-approvals.js";
+export type { PolicyApprovalTarget, PolicyEnforcementApprovalStatus } from "./policy-approvals.js";
 
 export type OrganizationScope = {
   organizationId: string;
@@ -244,6 +248,13 @@ export type OrganizationAccessParams = {
   organizationId: string;
   minimumRole?: OrganizationRole;
 };
+
+export class OrganizationAccessError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OrganizationAccessError";
+  }
+}
 
 export function requireOrganizationId(organizationId: string): string {
   if (!organizationId || organizationId.trim().length === 0) {
@@ -288,7 +299,7 @@ export async function ensureOrganizationAccess({
   const scopedOrganizationId = requireOrganizationId(organizationId);
 
   if (!userId || userId.trim().length === 0) {
-    throw new Error("userId is required for organization access checks");
+    throw new OrganizationAccessError("userId is required for organization access checks");
   }
 
   const membership = await prismaClient.organizationMember.findFirst({
@@ -303,12 +314,12 @@ export async function ensureOrganizationAccess({
   });
 
   if (!membership) {
-    throw new Error("User is not a member of the requested organization");
+    throw new OrganizationAccessError("User is not a member of the requested organization");
   }
 
   const userRole = membership.role;
   if (ROLE_PRIORITY[normalizeRole(userRole)] < ROLE_PRIORITY[normalizeRole(minimumRole)]) {
-    throw new Error(
+    throw new OrganizationAccessError(
       `User does not have the required role (${minimumRole}) for organization ${scopedOrganizationId}`,
     );
   }
@@ -334,7 +345,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
 export function normalizePolicyMode(value?: string | null): PolicyMode {
   const normalized = (value ?? "DRY_RUN").toUpperCase();
   if (normalized === "ENFORCING" || normalized === "DRY_RUN" || normalized === "DISABLED") {
-    return normalized as PolicyMode;
+    return normalized;
   }
   throw new Error(`Invalid policy mode: ${value}. Expected ENFORCING, DRY_RUN, or DISABLED.`);
 }
@@ -345,7 +356,7 @@ export type CreatePolicyParams = {
   name: string;
   description?: string | null;
   enabled?: boolean;
-  mode?: PolicyMode | string;
+  mode?: string;
   version?: string;
 };
 
@@ -385,7 +396,7 @@ export async function updatePolicyMode({
   prisma: PrismaClient;
   organizationId: string;
   policyId: string;
-  mode: PolicyMode | string;
+  mode: string;
 }) {
   requireOrganizationId(organizationId);
   if (!policyId) {
@@ -558,7 +569,7 @@ export async function revokeApiKey({
 export function normalizeAIApprovalStatus(value?: string | null): AIApprovalStatus {
   const normalized = (value ?? "UNREVIEWED").toUpperCase();
   if (normalized === "APPROVED" || normalized === "REVIEW" || normalized === "BLOCKED") {
-    return normalized as AIApprovalStatus;
+    return normalized;
   }
   return "UNREVIEWED";
 }
@@ -567,7 +578,7 @@ export type RegisterAIProviderParams = {
   prisma: PrismaClient;
   organizationId: string;
   name: string;
-  status?: AIApprovalStatus | string;
+  status?: string;
   website?: string | null;
   description?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -613,7 +624,7 @@ export type RegisterAIAgentParams = {
   organizationId: string;
   providerId: string;
   name: string;
-  status?: AIApprovalStatus | string;
+  status?: string;
   description?: string | null;
   metadata?: Record<string, unknown> | null;
 };
@@ -658,7 +669,7 @@ export type RegisterAIModelParams = {
   organizationId: string;
   providerId: string;
   name: string;
-  status?: AIApprovalStatus | string;
+  status?: string;
   version?: string | null;
   description?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -763,10 +774,20 @@ export function normalizeSBOMComponentStatus(value?: string | null): SBOMCompone
     normalized === "BLOCKED" ||
     normalized === "ACCEPTED"
   ) {
-    return normalized as SBOMComponentStatus;
+    return normalized;
   }
   return "ACTIVE";
 }
+
+export {
+  getNotificationCategory,
+  getNotificationEmailPreferenceField,
+  NOTIFICATION_EMAIL_PREFERENCE_FIELDS,
+} from "./notification-category.js";
+export type {
+  NotificationCategory,
+  NotificationEmailPreferenceField,
+} from "./notification-category.js";
 
 export type RegisterSBOMComponentParams = {
   prisma: PrismaClient;
@@ -774,7 +795,7 @@ export type RegisterSBOMComponentParams = {
   name: string;
   version?: string | null;
   ecosystem?: string | null;
-  status?: SBOMComponentStatus | string;
+  status?: string;
   source?: string | null;
   metadata?: Record<string, unknown> | null;
 };
@@ -897,7 +918,7 @@ export async function recordObservabilityEvent({
   correlationId,
   metadata,
 }: RecordObservabilityEventParams) {
-  const normalizedMessage = message?.trim();
+  const normalizedMessage = message.trim();
   if (!normalizedMessage) {
     throw new Error("observability event message is required");
   }
@@ -925,3 +946,4 @@ export * from "./retention.js";
 export * from "./authorize.js";
 export * from "./sessions.js";
 export * from "./tenant.js";
+export * from "./change-passport-integrity.js";

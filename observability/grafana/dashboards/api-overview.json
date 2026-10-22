@@ -1,6 +1,6 @@
 {
   "uid": "ai-sdlc-api-operations",
-  "title": "AI-SDLC API Operations",
+  "title": "Nomalog API Operations",
   "tags": ["api", "operations"],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -75,9 +75,7 @@
         "graphMode": "none",
         "justifyMode": "auto"
       },
-      "targets": [
-        { "expr": "api:sli_availability:ratio30d", "refId": "A", "instant": true }
-      ]
+      "targets": [{ "expr": "api:sli_availability:ratio30d", "refId": "A", "instant": true }]
     }
   ]
 }

@@ -19,6 +19,7 @@ export function getGithubQueue(): Queue {
   if (!githubQueue) {
     githubQueue = new Queue(QUEUE_NAMES.GITHUB, {
       connection: getRedisConnection(),
+      ...(process.env["BULLMQ_PREFIX"] ? { prefix: process.env["BULLMQ_PREFIX"] } : {}),
       defaultJobOptions: {
         attempts: 5,
         backoff: { type: "exponential", delay: 2000 },
@@ -60,6 +61,26 @@ export async function enqueueGitHubWebhookEvent(payload: {
   return job.id ?? jobId;
 }
 
+export async function enqueueSourceControlWebhookEvent(payload: {
+  provider: string;
+  eventType: string;
+  deliveryId: string;
+  payloadHash: string;
+  organizationId?: string;
+  repositoryId?: string;
+}): Promise<string> {
+  const queue = getGithubQueue();
+  const jobId = createHash("sha256")
+    .update(`${payload.provider}:${payload.eventType}:${payload.deliveryId}`)
+    .digest("hex");
+  const job = await queue.add(
+    JOB_TYPES.SOURCE_CONTROL_WEBHOOK_EVENT,
+    { ...payload, enqueuedAt: new Date().toISOString() },
+    { jobId },
+  );
+  return job.id ?? jobId;
+}
+
 export function getGitHubWebhookEventJobId(eventType: string, deliveryId: string): string {
   return createHash("sha256").update(`${eventType}:${deliveryId}`).digest("hex");
 }
@@ -90,6 +111,39 @@ export async function enqueuePullRequestAnalysis(payload: {
     enqueuedAt: new Date().toISOString(),
   });
   return job.id ?? "unknown";
+}
+
+export async function enqueueAssessment(payload: {
+  assessmentId: string;
+  attempt: number;
+}): Promise<string> {
+  const queue = getGithubQueue();
+  const job = await queue.add(
+    JOB_TYPES.ASSESSMENT_RUN,
+    { ...payload, enqueuedAt: new Date().toISOString() },
+    {
+      jobId: `assessment-${payload.assessmentId}-${payload.attempt}`,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+    },
+  );
+  return job.id ?? `assessment-${payload.assessmentId}-${payload.attempt}`;
+}
+
+export async function enqueueNotificationDelivery(
+  notificationId: string,
+  attemptOffset = 0,
+): Promise<string> {
+  const jobId =
+    attemptOffset === 0
+      ? `notification-${notificationId}`
+      : `notification-${notificationId}-retry-${attemptOffset}`;
+  const job = await getGithubQueue().add(
+    JOB_TYPES.NOTIFICATION_DELIVER,
+    { notificationId, attemptOffset },
+    { jobId },
+  );
+  return job.id ?? jobId;
 }
 
 export async function closeQueueConnections(): Promise<void> {

@@ -3,13 +3,14 @@ import {
   classifyFilePath,
   classifyFilePaths,
   evaluateRisk,
+  isDependencyManifestPath,
   RISK_MODEL_VERSION,
   RISK_PACKAGE_VERSION,
 } from "./index.js";
 
 describe("@ai-sdlc/risk", () => {
   it("exports risk model version", () => {
-    expect(RISK_MODEL_VERSION).toBe("risk-v1");
+    expect(RISK_MODEL_VERSION).toBe("risk-v2");
   });
 
   it("exports package version", () => {
@@ -21,10 +22,9 @@ describe("@ai-sdlc/risk", () => {
   });
 
   it("classifies payments and authorization from multiple file paths", () => {
-    expect(classifyFilePaths(["src/payments/refund.ts", "src/authorization/policy.ts"]).sort()).toEqual([
-      "AUTHORIZATION",
-      "PAYMENTS",
-    ]);
+    expect(
+      classifyFilePaths(["src/payments/refund.ts", "src/authorization/policy.ts"]).sort(),
+    ).toEqual(["AUTHORIZATION", "PAYMENTS"]);
   });
 
   it("supports multiple categories for a single path", () => {
@@ -33,6 +33,12 @@ describe("@ai-sdlc/risk", () => {
       "AUTHORIZATION",
       "PAYMENTS",
     ]);
+  });
+
+  it("recognizes dependency manifests without claiming dependency versions changed", () => {
+    expect(isDependencyManifestPath("packages/app/package.json")).toBe(true);
+    expect(isDependencyManifestPath("go.sum")).toBe(true);
+    expect(isDependencyManifestPath("src/dependencies/handler.ts")).toBe(false);
   });
 
   it("assigns LOW risk when AI is NO and repository is LOW criticality", () => {
@@ -57,14 +63,39 @@ describe("@ai-sdlc/risk", () => {
       sensitiveAreas: ["PAYMENTS", "AUTHORIZATION"],
       additions: 80,
       deletions: 20,
-      newDependencies: 1,
-      securityFindings: [
-        { severity: "HIGH", count: 1 },
-      ],
+      dependencyManifestFilesChanged: 1,
+      securityFindings: [{ severity: "HIGH", count: 1 }],
     });
 
     expect(["HIGH", "CRITICAL"]).toContain(result.level);
     expect(result.score).toBeGreaterThanOrEqual(60);
     expect(result.factors.some((factor) => factor.name === "Sensitive areas")).toBe(true);
+    expect(
+      result.factors.some((factor) => factor.name === "Dependency manifest files changed"),
+    ).toBe(true);
+  });
+
+  it("includes actual finding counts and evidence outcomes in risk factors", () => {
+    const result = evaluateRisk({
+      repositoryCriticality: "LOW",
+      aiInvolvement: "NO",
+      aiConfidence: 0,
+      sensitiveAreas: [],
+      additions: 0,
+      deletions: 0,
+      securityFindings: [{ severity: "HIGH", count: 2 }],
+      evidenceSummary: [
+        { result: "FAIL", count: 1 },
+        { result: "NOT_RUN", count: 2 },
+      ],
+    });
+
+    expect(result.modelVersion).toBe("risk-v2");
+    expect(result.factors.find((factor) => factor.name === "Security findings")?.weight).toBe(30);
+    expect(result.factors.find((factor) => factor.name === "Evidence uncertainty")?.weight).toBe(
+      20,
+    );
+    expect(result.explanation).toContain("security findings 2");
+    expect(result.explanation).toContain("evidence signals 3");
   });
 });

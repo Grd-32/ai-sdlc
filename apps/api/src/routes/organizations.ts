@@ -13,7 +13,7 @@
  */
 
 import type { Hono } from "hono";
-import { prisma, recordAuditEvent } from "@ai-sdlc/db";
+import { getPolicyEnforcementApprovalStatuses, prisma, recordAuditEvent } from "@ai-sdlc/db";
 import { requireAuth, requireOrganizationRole } from "../middleware/auth.js";
 import { redactSensitiveFields } from "../security/redaction.js";
 import type { AppEnv } from "../types.js";
@@ -27,18 +27,42 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
       where: { userId },
       select: {
         role: true,
-        organization: { select: { id: true, name: true, slug: true } },
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            policyApprovalQuorum: true,
+            ssoEnforced: true,
+            identityProviders: {
+              where: { enabled: true },
+              select: { id: true },
+            },
+          },
+        },
       },
       orderBy: { createdAt: "asc" },
     });
 
     return c.json({
-      data: memberships.map((m) => ({
-        id: m.organization.id,
-        name: m.organization.name,
-        slug: m.organization.slug,
-        role: m.role,
-      })),
+      data: memberships
+        .filter((membership) => {
+          if (!membership.organization.ssoEnforced) return true;
+          return (
+            c.get("authenticationMethod") !== "GITHUB" &&
+            membership.organization.identityProviders.some(
+              (provider) => provider.id === c.get("identityProviderId"),
+            )
+          );
+        })
+        .map((m) => ({
+          id: m.organization.id,
+          name: m.organization.name,
+          slug: m.organization.slug,
+          policyApprovalQuorum: m.organization.policyApprovalQuorum,
+          role: m.role,
+          ssoEnforced: m.organization.ssoEnforced,
+        })),
       error: null,
     });
   });
@@ -91,6 +115,7 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
           sbomComponents: true,
           riskAcceptances: true,
           observabilityEvents: true,
+          assessments: { include: { repositories: true } },
         },
       });
 
@@ -131,26 +156,37 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
     async (c) => {
       const organizationId = c.get("organizationId");
 
-      const [aiAssistedPrs, riskAssessments, policyDecisions, totalPassports] = await Promise.all([
-        prisma.aIActivity.count({ where: { organizationId, involvement: "YES" } }),
-        prisma.riskAssessment.findMany({
-          where: { organizationId },
-          select: { level: true, pullRequestId: true },
-          orderBy: { createdAt: "desc" },
-          distinct: ["pullRequestId"],
-        }),
-        prisma.policyDecision.findMany({
-          where: { organizationId },
-          select: { action: true, pullRequestId: true },
-          orderBy: { createdAt: "desc" },
-          distinct: ["pullRequestId"],
-        }),
-        prisma.changePassport.count({ where: { organizationId } }),
-      ]);
+      const [latestAiActivities, riskAssessments, policyDecisions, totalPassports] =
+        await Promise.all([
+          prisma.aIActivity.findMany({
+            where: { organizationId, pullRequestId: { not: null } },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            distinct: ["pullRequestId"],
+            select: { involvement: true },
+          }),
+          prisma.riskAssessment.findMany({
+            where: { organizationId },
+            select: { level: true, pullRequestId: true },
+            orderBy: { createdAt: "desc" },
+            distinct: ["pullRequestId"],
+          }),
+          prisma.policyDecision.findMany({
+            where: { organizationId },
+            select: { action: true, pullRequestId: true },
+            orderBy: { createdAt: "desc" },
+            distinct: ["pullRequestId"],
+          }),
+          prisma.changePassport.count({ where: { organizationId } }),
+        ]);
 
       return c.json({
         data: {
-          aiAssistedPullRequests: aiAssistedPrs,
+          aiAssistedPullRequests: latestAiActivities.filter(
+            (activity) => activity.involvement === "YES",
+          ).length,
+          unattributedPullRequests: latestAiActivities.filter(
+            (activity) => activity.involvement === "UNKNOWN",
+          ).length,
           highRiskChanges: riskAssessments.filter((r) => r.level === "HIGH").length,
           criticalChanges: riskAssessments.filter((r) => r.level === "CRITICAL").length,
           blockedChanges: policyDecisions.filter((p) => p.action === "BLOCK").length,
@@ -244,7 +280,14 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
           codeChanges: true,
           findings: true,
           evidence: true,
-          reviews: true,
+          reviews: {
+            orderBy: { createdAt: "desc" },
+            include: {
+              reviewer: {
+                select: { id: true, name: true, username: true },
+              },
+            },
+          },
           passports: { orderBy: { updatedAt: "desc" }, take: 1 },
         },
       });
@@ -273,11 +316,13 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
         orderBy: { name: "asc" },
         select: {
           id: true,
+          provider: true,
           owner: true,
           name: true,
           criticality: true,
           enabled: true,
           _count: { select: { pullRequests: true } },
+          installation: { select: { permissions: true } },
         },
       });
 
@@ -292,12 +337,52 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
     requireOrganizationRole("VIEWER"),
     async (c) => {
       const organizationId = c.get("organizationId");
+      const canManagePolicies = ["OWNER", "ADMIN"].includes(c.get("organizationRole"));
       const policies = await prisma.policy.findMany({
         where: { organizationId },
         orderBy: { createdAt: "desc" },
-        include: { policyRules: true },
+        include: {
+          policyRules: true,
+          ...(canManagePolicies
+            ? {
+                revisions: {
+                  orderBy: { createdAt: "desc" as const },
+                  take: 10,
+                  select: {
+                    id: true,
+                    version: true,
+                    snapshot: true,
+                    createdAt: true,
+                  },
+                },
+              }
+            : {}),
+        },
       });
-      return c.json({ data: policies, error: null });
+      const approvalStatuses = await getPolicyEnforcementApprovalStatuses({
+        prisma,
+        organizationId,
+        policies,
+      });
+      return c.json({
+        data: policies.map((policy) => {
+          const enforcementApproval = approvalStatuses.get(policy.id);
+          if (!enforcementApproval) {
+            throw new Error(`Missing enforcement approval status for policy ${policy.id}.`);
+          }
+          return {
+            ...policy,
+            enforcementApproval: canManagePolicies
+              ? enforcementApproval
+              : {
+                  requiredApprovals: enforcementApproval.requiredApprovals,
+                  approvalCount: enforcementApproval.approvalCount,
+                  approved: enforcementApproval.approved,
+                },
+          };
+        }),
+        error: null,
+      });
     },
   );
 
@@ -309,12 +394,55 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
     async (c) => {
       const organizationId = c.get("organizationId");
       const pullRequestId = c.req.query("pullRequestId") ?? undefined;
-      const limit = Math.min(Number(c.req.query("limit") ?? 100) || 100, 500);
+      const requestedLimit = Number(c.req.query("limit") ?? 100);
+      const limit =
+        Number.isInteger(requestedLimit) && requestedLimit > 0
+          ? Math.min(requestedLimit, 500)
+          : 100;
+      const evidenceIds = pullRequestId
+        ? await prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT e."id"
+            FROM "Evidence" e
+            INNER JOIN "PullRequest" pr ON pr."id" = e."pullRequestId"
+            WHERE e."organizationId" = ${organizationId}
+              AND e."pullRequestId" = ${pullRequestId}
+              AND e."headSha" IS NOT DISTINCT FROM pr."headSha"
+            ORDER BY e."createdAt" DESC
+            LIMIT ${limit}
+          `
+        : await prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT e."id"
+            FROM "Evidence" e
+            LEFT JOIN "PullRequest" pr ON pr."id" = e."pullRequestId"
+            WHERE e."organizationId" = ${organizationId}
+              AND (
+                e."pullRequestId" IS NULL
+                OR e."headSha" IS NOT DISTINCT FROM pr."headSha"
+              )
+            ORDER BY e."createdAt" DESC
+            LIMIT ${limit}
+          `;
 
-      const evidence = await prisma.evidence.findMany({
-        where: { organizationId, ...(pullRequestId ? { pullRequestId } : {}) },
-        orderBy: { createdAt: "desc" },
-        take: limit,
+      const rows = evidenceIds.length
+        ? await prisma.evidence.findMany({
+            where: { organizationId, id: { in: evidenceIds.map(({ id }) => id) } },
+            include: {
+              pullRequest: {
+                select: {
+                  id: true,
+                  number: true,
+                  title: true,
+                  headSha: true,
+                  repository: { select: { owner: true, name: true } },
+                },
+              },
+            },
+          })
+        : [];
+      const evidenceById = new Map(rows.map((item) => [item.id, item]));
+      const evidence = evidenceIds.flatMap(({ id }) => {
+        const item = evidenceById.get(id);
+        return item ? [item] : [];
       });
 
       return c.json({ data: evidence, error: null });

@@ -46,7 +46,7 @@ export interface RiskAssessmentInput {
   additions: number;
   deletions: number;
   changedFiles?: number;
-  newDependencies?: number;
+  dependencyManifestFilesChanged?: number;
   securityFindings?: SecurityFindingSummary[];
   evidenceSummary?: EvidenceSummary[];
 }
@@ -61,7 +61,14 @@ const SENSITIVE_AREA_RULES: Array<{
   },
   {
     area: "AUTHORIZATION",
-    patterns: [/authorization/i, /authorize/i, /permission/i, /access-control/i, /rbac/i, /roles?\b/i],
+    patterns: [
+      /authorization/i,
+      /authorize/i,
+      /permission/i,
+      /access-control/i,
+      /rbac/i,
+      /roles?\b/i,
+    ],
   },
   {
     area: "PAYMENTS",
@@ -81,11 +88,27 @@ const SENSITIVE_AREA_RULES: Array<{
   },
   {
     area: "PERSONAL_DATA",
-    patterns: [/personal/i, /pii/i, /user_data/i, /customer_data/i, /ssn/i, /dob/i, /personal_data/i],
+    patterns: [
+      /personal/i,
+      /pii/i,
+      /user_data/i,
+      /customer_data/i,
+      /ssn/i,
+      /dob/i,
+      /personal_data/i,
+    ],
   },
   {
     area: "INFRASTRUCTURE",
-    patterns: [/terraform/i, /cloudformation/i, /k8s/i, /helm/i, /infrastructure/i, /infra/i, /deployment/i],
+    patterns: [
+      /terraform/i,
+      /cloudformation/i,
+      /k8s/i,
+      /helm/i,
+      /infrastructure/i,
+      /infra/i,
+      /deployment/i,
+    ],
   },
   {
     area: "NETWORKING",
@@ -97,11 +120,24 @@ const SENSITIVE_AREA_RULES: Array<{
   },
   {
     area: "DEPENDENCIES",
-    patterns: [/package\.json/i, /pnpm-lock\.yaml/i, /package-lock\.json/i, /yarn\.lock/i, /dependencies?/i],
+    patterns: [
+      /package\.json/i,
+      /pnpm-lock\.yaml/i,
+      /package-lock\.json/i,
+      /yarn\.lock/i,
+      /dependencies?/i,
+    ],
   },
   {
     area: "CI_CD",
-    patterns: [/github\/workflows/i, /\.github\/workflows/i, /ci\/|\.circleci\//i, /jenkinsfile/i, /azure-pipelines\.yml/i, /pipeline/i],
+    patterns: [
+      /github\/workflows/i,
+      /\.github\/workflows/i,
+      /ci\/|\.circleci\//i,
+      /jenkinsfile/i,
+      /azure-pipelines\.yml/i,
+      /pipeline/i,
+    ],
   },
   {
     area: "CONTAINERS",
@@ -113,11 +149,27 @@ const SENSITIVE_AREA_RULES: Array<{
   },
   {
     area: "FRONTEND",
-    patterns: [/\bui\b/i, /components?\//i, /pages\//i, /app\//i, /styles?\//i, /\.tsx$/i, /\.jsx$/i],
+    patterns: [
+      /\bui\b/i,
+      /components?\//i,
+      /pages\//i,
+      /app\//i,
+      /styles?\//i,
+      /\.tsx$/i,
+      /\.jsx$/i,
+    ],
   },
   {
     area: "TESTING",
-    patterns: [/__tests__\//i, /\.test\.tsx?$/i, /\.spec\.tsx?$/i, /jest/i, /vitest/i, /playwright/i, /cypress/i],
+    patterns: [
+      /__tests__\//i,
+      /\.test\.tsx?$/i,
+      /\.spec\.tsx?$/i,
+      /jest/i,
+      /vitest/i,
+      /playwright/i,
+      /cypress/i,
+    ],
   },
   {
     area: "DOCUMENTATION",
@@ -191,7 +243,7 @@ function scoreChangeSize(additions: number, deletions: number, changedFiles?: nu
   return Math.min(20, Math.sqrt(total) * 2 * fileMultiplier);
 }
 
-function scoreNewDependencies(count?: number): number {
+function scoreDependencyManifestChanges(count?: number): number {
   const safeCount = sanitizeNumber(count ?? 0);
   return safeCount > 0 ? Math.min(15, safeCount * 6) : 0;
 }
@@ -211,7 +263,10 @@ function scoreSecurityFindings(findings?: SecurityFindingSummary[]): number {
 
   return Math.min(
     30,
-    findings.reduce((sum, finding) => sum + severityWeights[finding.severity] * sanitizeNumber(finding.count), 0),
+    findings.reduce(
+      (sum, finding) => sum + severityWeights[finding.severity] * sanitizeNumber(finding.count),
+      0,
+    ),
   );
 }
 
@@ -230,7 +285,10 @@ function scoreEvidenceSummary(evidence?: EvidenceSummary[]): number {
 
   return Math.min(
     20,
-    evidence.reduce((sum, item) => sum + resultWeights[item.result] * sanitizeNumber(item.count), 0),
+    evidence.reduce(
+      (sum, item) => sum + resultWeights[item.result] * sanitizeNumber(item.count),
+      0,
+    ),
   );
 }
 
@@ -253,7 +311,7 @@ export function evaluateRisk(input: RiskAssessmentInput): RiskAssessmentResult {
   const criticalityScore = REPOSITORY_CRITICALITY_WEIGHTS[input.repositoryCriticality];
   const sensitiveAreaScore = scoreSensitiveAreas(input.sensitiveAreas);
   const changeSizeScore = scoreChangeSize(input.additions, input.deletions, input.changedFiles);
-  const dependencyScore = scoreNewDependencies(input.newDependencies);
+  const dependencyScore = scoreDependencyManifestChanges(input.dependencyManifestFilesChanged);
   const findingScore = scoreSecurityFindings(input.securityFindings);
   const evidenceScore = scoreEvidenceSummary(input.evidenceSummary);
 
@@ -267,7 +325,8 @@ export function evaluateRisk(input: RiskAssessmentInput): RiskAssessmentResult {
     evidenceScore;
 
   const score = clampScore(rawScore);
-  const level: RiskLevel = score >= 80 ? "CRITICAL" : score >= 60 ? "HIGH" : score >= 35 ? "MEDIUM" : "LOW";
+  const level: RiskLevel =
+    score >= 80 ? "CRITICAL" : score >= 60 ? "HIGH" : score >= 35 ? "MEDIUM" : "LOW";
 
   const factors: RiskFactor[] = [
     {
@@ -291,15 +350,16 @@ export function evaluateRisk(input: RiskAssessmentInput): RiskAssessmentResult {
       description: `additions=${input.additions} deletions=${input.deletions}`,
     },
     {
-      name: "New dependencies",
+      name: "Dependency manifest files changed",
       weight: dependencyScore,
-      description: `count=${input.newDependencies ?? 0}`,
+      description: `count=${input.dependencyManifestFilesChanged ?? 0}; does not count or assess dependency versions`,
     },
     {
       name: "Security findings",
       weight: findingScore,
       description:
-        String(input.securityFindings?.reduce((sum, f) => sum + sanitizeNumber(f.count), 0) ?? 0) + " findings",
+        String(input.securityFindings?.reduce((sum, f) => sum + sanitizeNumber(f.count), 0) ?? 0) +
+        " findings",
     },
     {
       name: "Evidence uncertainty",
@@ -310,7 +370,7 @@ export function evaluateRisk(input: RiskAssessmentInput): RiskAssessmentResult {
     },
   ];
 
-  const explanation = `risk-v1 computed from AI involvement (${input.aiInvolvement}), repository criticality (${input.repositoryCriticality}), ${input.sensitiveAreas.length} sensitive areas, change size ${input.additions}+${input.deletions}, ${input.newDependencies ?? 0} new dependencies, security findings ${input.securityFindings?.length ?? 0}, evidence signals ${input.evidenceSummary?.length ?? 0}.`;
+  const explanation = `risk-v2 computed from AI involvement (${input.aiInvolvement}), repository criticality (${input.repositoryCriticality}), ${input.sensitiveAreas.length} sensitive areas, change size ${input.additions}+${input.deletions}, ${input.dependencyManifestFilesChanged ?? 0} dependency manifest files changed (not dependency versions), security findings ${input.securityFindings?.reduce((sum, finding) => sum + sanitizeNumber(finding.count), 0) ?? 0}, evidence signals ${input.evidenceSummary?.reduce((sum, item) => sum + sanitizeNumber(item.count), 0) ?? 0}.`;
 
   return {
     score,
@@ -347,6 +407,13 @@ export function classifyFilePaths(filePaths: string[]): SensitiveArea[] {
   return [...areas];
 }
 
-export const RISK_MODEL_VERSION = "risk-v1";
+const DEPENDENCY_MANIFEST_PATTERN =
+  /(?:^|\/)(?:package\.json|pnpm-lock\.yaml|package-lock\.json|yarn\.lock|poetry\.lock|requirements(?:-[^/]+)?\.txt|cargo\.(?:toml|lock)|go\.(?:mod|sum)|gemfile(?:\.lock)?|composer\.(?:json|lock)|pom\.xml|gradle\.lock|build\.gradle(?:\.kts)?)$/i;
+
+export function isDependencyManifestPath(filePath: string): boolean {
+  return DEPENDENCY_MANIFEST_PATTERN.test(filePath.trim().replace(/\\/g, "/"));
+}
+
+export const RISK_MODEL_VERSION = "risk-v2";
 
 export const RISK_PACKAGE_VERSION = "0.1.0";

@@ -15,6 +15,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const organizationId = String(formData.get("organizationId") ?? "");
   const name = String(formData.get("name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
+  const mode = String(formData.get("mode") ?? "DRY_RUN");
 
   const redirectUrl = new URL("/dashboard/policies", redirectOrigin(request));
 
@@ -26,10 +27,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const result = await mutateApi(`/api/organizations/${organizationId}/policies`, "POST", {
     name,
     description: description || undefined,
+    mode,
   });
 
   if (!result.ok) {
-    redirectUrl.searchParams.set("policyError", result.error?.message ?? "Failed to create policy.");
+    redirectUrl.searchParams.set(
+      "policyError",
+      result.error?.message ?? "Failed to create policy.",
+    );
   }
 
   return NextResponse.redirect(redirectUrl);

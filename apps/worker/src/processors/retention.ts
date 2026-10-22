@@ -1,8 +1,4 @@
-import {
-  prisma,
-  pruneExpiredSessions,
-  pruneExpiredWebhookEvents,
-} from "@ai-sdlc/db";
+import { prisma, pruneExpiredSessions, pruneExpiredWebhookEvents } from "@ai-sdlc/db";
 
 export type RetentionCleanupPolicy = {
   sessionMaxAgeDays: number;
@@ -13,7 +9,7 @@ export async function processRetentionCleanup(
   prismaClient: typeof prisma,
   policy: RetentionCleanupPolicy,
   now = new Date(),
-): Promise<{ sessionsDeleted: number; webhookEventsDeleted: number }> {
+): Promise<{ sessionsDeleted: number; webhookEventsDeleted: number; assessmentsDeleted: number }> {
   const [sessionsDeleted, organizationsWithOverrides] = await Promise.all([
     pruneExpiredSessions({
       prisma: prismaClient,
@@ -35,10 +31,13 @@ export async function processRetentionCleanup(
         : [{ organizationId: organization.id, maxAgeDays: organization.webhookRetentionDays }],
     ),
   });
+  const assessmentsDeleted = await prismaClient.assessment.deleteMany({
+    where: { expiresAt: { lte: now } },
+  });
 
   console.log(
-    `[retention] sessionsDeleted=${sessionsDeleted} webhookEventsDeleted=${webhookEventsDeleted}`,
+    `[retention] sessionsDeleted=${sessionsDeleted} webhookEventsDeleted=${webhookEventsDeleted} assessmentsDeleted=${assessmentsDeleted.count}`,
   );
 
-  return { sessionsDeleted, webhookEventsDeleted };
+  return { sessionsDeleted, webhookEventsDeleted, assessmentsDeleted: assessmentsDeleted.count };
 }

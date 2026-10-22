@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { SELECTED_ORG_COOKIE } from "@/lib/api";
 
 const INSTALLATION_ORG_COOKIE = "ai_sdlc_github_installation_org";
-const CALLBACK_PATH = "/api/github/installations/callback";
 
 function appOrigin(request: NextRequest): string {
   const configuredUrl = process.env["APP_URL"];
@@ -60,7 +59,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     httpOnly: true,
     secure: origin.startsWith("https://"),
     sameSite: "lax",
-    path: CALLBACK_PATH,
+    path: "/",
     maxAge: 10 * 60,
   });
   return response;

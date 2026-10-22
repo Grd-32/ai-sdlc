@@ -3,8 +3,8 @@ import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "./types.js";
 
-process.env["DATABASE_URL"] =
-  process.env["DATABASE_URL"] ?? "postgresql://localhost:5432/ai_sdlc?schema=public";
+const testDatabaseUrl = process.env["TEST_DATABASE_URL"];
+process.env["DATABASE_URL"] = testDatabaseUrl ?? "postgresql://test:test@127.0.0.1:1/nomalog_test";
 process.env["REDIS_URL"] = process.env["REDIS_URL"] ?? "redis://localhost:6379";
 process.env["SESSION_SECRET"] =
   process.env["SESSION_SECRET"] ?? "test-session-secret-do-not-use-in-prod";
@@ -140,7 +140,7 @@ afterAll(async () => {
   await prisma.organization.deleteMany({ where: { id: { in: organizationIds } } });
 });
 
-describe("tenant-scoped identity lifecycle", () => {
+describe.skipIf(!testDatabaseUrl)("tenant-scoped identity lifecycle", () => {
   it("does not reassign a GitHub installation owned by another organization", async () => {
     const installationId = `github-installation-${runId}`;
     const existing = await prisma.gitHubInstallation.create({
@@ -209,7 +209,7 @@ describe("tenant-scoped identity lifecycle", () => {
   it("uses the short-lived web callback context when GitHub omits setup state", async () => {
     const installationId = `github-installation-state-cookie-${runId}`;
     const response = await app.request(
-      `/api/github/installations/callback?installation_id=${installationId}&setup_action=update`,
+      `/api/github/installations/callback?installation_id=${installationId}&state=${organizationB.id}&setup_action=update`,
       {
         headers: {
           Cookie: `ai_sdlc_session=${sessionCookie}; ai_sdlc_github_installation_org=${organizationA.id}`,
