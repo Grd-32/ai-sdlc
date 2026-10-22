@@ -508,12 +508,12 @@ export function buildGitHubCheckProtectionEvidence(input: {
       headSha: input.headSha,
       targetBranch: input.targetBranch,
       required: required ?? null,
-      reason:
-        !available
-          ? input.reason ?? "Branch-protection configuration could not be read for the target branch."
-          : required
-            ? "Classic branch-protection settings list Nomalog Security as a required check."
-            : "The classic branch-protection endpoint does not report all rulesets; absence here cannot establish that no merge gate applies.",
+      reason: !available
+        ? (input.reason ??
+          "Branch-protection configuration could not be read for the target branch.")
+        : required
+          ? "Classic branch-protection settings list Nomalog Security as a required check."
+          : "The classic branch-protection endpoint does not report all rulesets; absence here cannot establish that no merge gate applies.",
       limitation:
         "This verifies configuration presence only. It does not prove GitHub prevented a merge, account for every ruleset or bypass actor, or establish effective enforcement.",
     },

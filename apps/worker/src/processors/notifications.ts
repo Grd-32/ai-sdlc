@@ -139,11 +139,7 @@ export async function processNotificationDelivery(
           expiresAt: { gt: new Date() },
         },
       })) > 0;
-    if (
-      typeof notification.invitationId === "string"
-        ? !hasPendingInvitation
-        : !membership
-    ) {
+    if (typeof notification.invitationId === "string" ? !hasPendingInvitation : !membership) {
       await markSkipped();
       return;
     }

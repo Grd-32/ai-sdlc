@@ -1,11 +1,6 @@
 import { createHash, timingSafeEqual, X509Certificate } from "node:crypto";
 import { type Context } from "hono";
-import {
-  SAML,
-  ValidateInResponseTo,
-  type CacheProvider,
-  type Profile,
-} from "@node-saml/node-saml";
+import { SAML, ValidateInResponseTo, type CacheProvider, type Profile } from "@node-saml/node-saml";
 import {
   authorizationCodeGrant,
   buildAuthorizationUrl,
@@ -181,7 +176,9 @@ const samlRequestCache: CacheProvider = {
     });
     if (!item) return null;
     if (item.expiresAt.getTime() <= Date.now()) {
-      await prisma.samlRequestCache.deleteMany({ where: { requestId: key, expiresAt: { lte: new Date() } } });
+      await prisma.samlRequestCache.deleteMany({
+        where: { requestId: key, expiresAt: { lte: new Date() } },
+      });
       return null;
     }
     return item.value;
@@ -249,7 +246,11 @@ async function consumeTransaction(
   }
 
   const provider = await getProvider(transaction.identityProviderId);
-  if (!provider || provider.type !== providerType || provider.organizationId !== transaction.organizationId) {
+  if (
+    !provider ||
+    provider.type !== providerType ||
+    provider.organizationId !== transaction.organizationId
+  ) {
     return null;
   }
   const consumed = await prisma.ssoTransaction.deleteMany({
@@ -259,7 +260,10 @@ async function consumeTransaction(
   return { transaction, provider };
 }
 
-function extractSamlValue(profile: Profile, configuredName: string | undefined): string | undefined {
+function extractSamlValue(
+  profile: Profile,
+  configuredName: string | undefined,
+): string | undefined {
   const profileValues: Record<string, unknown> = { ...profile };
   const candidates = [
     configuredName,

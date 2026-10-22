@@ -216,38 +216,46 @@ describe("assessment report helpers", () => {
         number: 7,
         headSha: "new-head",
         repository: { owner: "acme", name: "service" },
-        provenanceSignals: [{
-          headSha: "old-head",
-          classification: "OBSERVED",
-          verificationStatus: "VERIFIED",
-          signalSource: "GITHUB",
-          signalType: "KNOWN_AI_BOT_AUTHOR",
-          evidenceReference: "github:pull-request:7",
-          evidenceAt: new Date("2026-10-12T00:00:00.000Z"),
-          confidence: 0.99,
-          limitations: null,
-        }],
+        provenanceSignals: [
+          {
+            headSha: "old-head",
+            classification: "OBSERVED",
+            verificationStatus: "VERIFIED",
+            signalSource: "GITHUB",
+            signalType: "KNOWN_AI_BOT_AUTHOR",
+            evidenceReference: "github:pull-request:7",
+            evidenceAt: new Date("2026-10-12T00:00:00.000Z"),
+            confidence: 0.99,
+            limitations: null,
+          },
+        ],
       },
       {
         number: 8,
         headSha: "current-head",
         repository: { owner: "acme", name: "service" },
-        provenanceSignals: [{
-          headSha: "current-head",
-          classification: "DECLARED",
-          verificationStatus: "UNVERIFIED",
-          signalSource: "GITHUB",
-          signalType: "DECLARED_PULL_REQUEST_TEXT",
-          evidenceReference: "github:pull-request:8",
-          evidenceAt: new Date("2026-10-12T00:00:00.000Z"),
-          confidence: 1.5,
-          limitations: null,
-        }],
+        provenanceSignals: [
+          {
+            headSha: "current-head",
+            classification: "DECLARED",
+            verificationStatus: "UNVERIFIED",
+            signalSource: "GITHUB",
+            signalType: "DECLARED_PULL_REQUEST_TEXT",
+            evidenceReference: "github:pull-request:8",
+            evidenceAt: new Date("2026-10-12T00:00:00.000Z"),
+            confidence: 1.5,
+            limitations: null,
+          },
+        ],
       },
     ]);
 
     expect(summary.classifications.UNKNOWN).toBe(2);
-    expect(summary.coverage).toMatchObject({ denominator: 2, currentHeadSignals: 1, percentage: 50 });
+    expect(summary.coverage).toMatchObject({
+      denominator: 2,
+      currentHeadSignals: 1,
+      percentage: 50,
+    });
     expect(summary.records[0]?.classification).toBe("UNKNOWN");
     expect(summary.records[1]).toMatchObject({
       classification: "UNKNOWN",

@@ -385,11 +385,7 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
     })),
   });
   const parseMemberValues = (value: unknown): string[] => {
-    const entries: unknown[] = Array.isArray(value)
-      ? value
-      : value === undefined
-        ? []
-        : [value];
+    const entries: unknown[] = Array.isArray(value) ? value : value === undefined ? [] : [value];
     return entries.flatMap((entry) => {
       if (typeof entry === "string") return [entry];
       if (typeof entry === "object" && entry !== null && "value" in entry) {
@@ -426,7 +422,8 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
         AUDITOR: 20,
         VIEWER: 10,
       };
-      const role = roles.sort((left, right) => rolePriority[right] - rolePriority[left])[0] ?? "VIEWER";
+      const role =
+        roles.sort((left, right) => rolePriority[right] - rolePriority[left])[0] ?? "VIEWER";
       await tx.organizationMember.update({
         where: { id: memberId },
         data: { role, scimManagedRole: roles.length > 0 },
@@ -477,8 +474,7 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
   scim.post("/Groups", async (c) => {
     const organizationId = c.get("scimOrganizationId");
     const body = await readJsonObject(c);
-    const displayName =
-      typeof body?.["displayName"] === "string" ? body["displayName"].trim() : "";
+    const displayName = typeof body?.["displayName"] === "string" ? body["displayName"].trim() : "";
     const externalId =
       typeof body?.["externalId"] === "string" && body["externalId"].trim()
         ? body["externalId"].trim()
@@ -551,8 +547,7 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
     });
     if (!group) return c.json({ detail: "Group not found" }, 404);
     const body = await readJsonObject(c);
-    const displayName =
-      typeof body?.["displayName"] === "string" ? body["displayName"].trim() : "";
+    const displayName = typeof body?.["displayName"] === "string" ? body["displayName"].trim() : "";
     if (!displayName) return c.json({ detail: "displayName is required" }, 400);
     const memberValue = body?.["members"];
     if (
@@ -632,10 +627,8 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
     const removals: string[] = [];
     let removeAllMembers = false;
     for (const operation of operations) {
-      const op =
-        typeof operation["op"] === "string" ? operation["op"].toLowerCase() : "";
-      const path =
-        typeof operation["path"] === "string" ? operation["path"].toLowerCase() : "";
+      const op = typeof operation["op"] === "string" ? operation["op"].toLowerCase() : "";
+      const path = typeof operation["path"] === "string" ? operation["path"].toLowerCase() : "";
       if (path === "displayname" && (op === "replace" || op === "add")) {
         if (typeof operation["value"] !== "string" || !operation["value"].trim()) {
           return c.json({ detail: "displayName must be a non-empty string" }, 400);
@@ -646,9 +639,9 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
       } else if (path === "members" && op === "add") {
         additions.push(...parseMemberValues(operation["value"]));
       } else if (path === "members" && op === "remove") {
-        const pathMember = operation["path"]?.toString().match(
-          /^members\[value\s+eq\s+"([^"]+)"\]$/i,
-        );
+        const pathMember = operation["path"]
+          ?.toString()
+          .match(/^members\[value\s+eq\s+"([^"]+)"\]$/i);
         const pathMemberId = pathMember?.[1];
         if (pathMemberId) {
           removals.push(pathMemberId);
@@ -668,10 +661,7 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
           where: {
             organizationId,
             scimActive: true,
-            OR: [
-              { externalId: { in: valuesToAdd } },
-              { id: { in: valuesToAdd } },
-            ],
+            OR: [{ externalId: { in: valuesToAdd } }, { id: { in: valuesToAdd } }],
           },
           select: { id: true },
         })
@@ -688,9 +678,7 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
           select: { id: true },
         })
       : [];
-    const membersForReplacement = replaceMembers === null
-      ? null
-      : membersToAdd.map(({ id }) => id);
+    const membersForReplacement = replaceMembers === null ? null : membersToAdd.map(({ id }) => id);
     for (const { id } of removalIds) affectedMemberIds.add(id);
     for (const { id } of membersToAdd) affectedMemberIds.add(id);
     const updatedGroup = await prisma.$transaction(async (tx) => {
@@ -707,9 +695,7 @@ export function registerScimRoutes(app: Hono<AppEnv>): void {
           where: { groupId: group.id, memberId: { in: removalIds.map(({ id }) => id) } },
         });
       }
-      const idsToCreate =
-        membersForReplacement ??
-        membersToAdd.map(({ id }) => id);
+      const idsToCreate = membersForReplacement ?? membersToAdd.map(({ id }) => id);
       if (idsToCreate.length) {
         await tx.scimGroupMember.createMany({
           data: idsToCreate.map((memberId) => ({ groupId: group.id, memberId })),

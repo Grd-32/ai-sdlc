@@ -29,7 +29,9 @@ export function SsoSignInForm() {
       }
       const available = result.data ?? [];
       if (available.length === 0) {
-        setMessage("No enabled SSO provider was found. Check the organization slug with its administrator.");
+        setMessage(
+          "No enabled SSO provider was found. Check the organization slug with its administrator.",
+        );
         return;
       }
       if (available.length === 1) {
@@ -51,7 +53,9 @@ export function SsoSignInForm() {
         Enter the organization slug provided by your administrator.
       </p>
       <form onSubmit={findProviders} className="mt-3 flex flex-col gap-2 sm:flex-row">
-        <label className="sr-only" htmlFor="sso-organization">Organization slug</label>
+        <label className="sr-only" htmlFor="sso-organization">
+          Organization slug
+        </label>
         <input
           id="sso-organization"
           value={organization}
@@ -69,7 +73,11 @@ export function SsoSignInForm() {
           {loading ? "Looking up…" : "Continue"}
         </button>
       </form>
-      {message && <p role="status" className="mt-2 text-sm text-slate-600">{message}</p>}
+      {message && (
+        <p role="status" className="mt-2 text-sm text-slate-600">
+          {message}
+        </p>
+      )}
       {providers.length > 1 && (
         <ul className="mt-3 space-y-2">
           {providers.map((provider) => (

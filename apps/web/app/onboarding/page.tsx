@@ -21,11 +21,15 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
   expired: "The sign-in request expired or could not be verified. Start sign-in again.",
   "account-conflict":
     "We couldn't safely match this GitHub account to an existing Nomalog account. Use the GitHub account with the verified email on your invitation. If you still can't sign in, ask an organization administrator to check the invitation email.",
-  "sso-failed": "Organization SSO could not be completed. Check the provider configuration or try again.",
+  "sso-failed":
+    "Organization SSO could not be completed. Check the provider configuration or try again.",
   "sso-provider-selection-required": "Choose an enabled sign-in provider for your organization.",
-  "sso-not-provisioned": "Your account is not an active member of this organization. Ask an administrator to provision access first.",
-  "sso-domain-not-verified": "The verified email from your identity provider does not match a domain verified by this organization.",
-  "sso-configuration": "The organization identity provider is not configured correctly. Contact its administrator.",
+  "sso-not-provisioned":
+    "Your account is not an active member of this organization. Ask an administrator to provision access first.",
+  "sso-domain-not-verified":
+    "The verified email from your identity provider does not match a domain verified by this organization.",
+  "sso-configuration":
+    "The organization identity provider is not configured correctly. Contact its administrator.",
   "sso-https-required": "Organization SSO requires a secure HTTPS connection.",
 };
 

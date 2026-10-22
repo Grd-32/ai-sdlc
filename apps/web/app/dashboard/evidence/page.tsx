@@ -2,12 +2,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { evidenceBadgeVariant } from "@/lib/badges";
-import {
-  getOrganizations,
-  getSelectedOrganization,
-  getEvidence,
-  getRepositories,
-} from "@/lib/api";
+import { getOrganizations, getSelectedOrganization, getEvidence, getRepositories } from "@/lib/api";
 import { FileCheck2, ShieldAlert } from "lucide-react";
 
 export default async function EvidencePage() {

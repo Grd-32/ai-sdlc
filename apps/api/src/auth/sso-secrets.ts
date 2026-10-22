@@ -28,13 +28,7 @@ export function encryptSsoSecret(secret: string): string {
 
 export function decryptSsoSecret(envelope: string): string {
   const [version, encodedIv, encodedTag, encodedCiphertext, ...extra] = envelope.split(".");
-  if (
-    version !== VERSION ||
-    !encodedIv ||
-    !encodedTag ||
-    !encodedCiphertext ||
-    extra.length > 0
-  ) {
+  if (version !== VERSION || !encodedIv || !encodedTag || !encodedCiphertext || extra.length > 0) {
     throw new Error("Stored SSO client secret has an unsupported encryption envelope.");
   }
   const decipher = createDecipheriv(ALGORITHM, getKey(), Buffer.from(encodedIv, "base64url"));

@@ -4,8 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "./types.js";
 
 const testDatabaseUrl = process.env["TEST_DATABASE_URL"];
-process.env["DATABASE_URL"] =
-  testDatabaseUrl ?? "postgresql://test:test@127.0.0.1:1/nomalog_test";
+process.env["DATABASE_URL"] = testDatabaseUrl ?? "postgresql://test:test@127.0.0.1:1/nomalog_test";
 
 const githubMocks = vi.hoisted(() => ({
   githubApiRequest: vi.fn(),

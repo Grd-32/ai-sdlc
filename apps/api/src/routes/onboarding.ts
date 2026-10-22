@@ -67,8 +67,7 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
     async (c) => {
       const organizationId = c.get("organizationId");
       const body = await readJsonObject(c);
-      const email =
-        typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+      const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
       const roleInput = typeof body?.role === "string" ? body.role : "VIEWER";
       const role = invitationRoles.find((candidate) => candidate === roleInput);
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -79,7 +78,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       }
       if (!role || !canManageRole(c.get("organizationRole"), role)) {
         return c.json(
-          { data: null, error: { code: "ROLE_NOT_ALLOWED", message: "That role cannot be invited." } },
+          {
+            data: null,
+            error: { code: "ROLE_NOT_ALLOWED", message: "That role cannot be invited." },
+          },
           403,
         );
       }
@@ -99,7 +101,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       });
       if (existingMember?.scimActive) {
         return c.json(
-          { data: null, error: { code: "ALREADY_A_MEMBER", message: "That user is already a member." } },
+          {
+            data: null,
+            error: { code: "ALREADY_A_MEMBER", message: "That user is already a member." },
+          },
           409,
         );
       }
@@ -167,7 +172,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       });
       if (!invitation) {
         return c.json(
-          { data: null, error: { code: "INVITATION_NOT_ACTIVE", message: "Invitation is not active." } },
+          {
+            data: null,
+            error: { code: "INVITATION_NOT_ACTIVE", message: "Invitation is not active." },
+          },
           404,
         );
       }
@@ -213,7 +221,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       });
       if (result.count !== 1) {
         return c.json(
-          { data: null, error: { code: "INVITATION_NOT_ACTIVE", message: "Invitation is not active." } },
+          {
+            data: null,
+            error: { code: "INVITATION_NOT_ACTIVE", message: "Invitation is not active." },
+          },
           404,
         );
       }
@@ -229,11 +240,13 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
 
   app.post("/api/invitations/accept", requireAuth, async (c) => {
     const body = await readJsonObject(c);
-    const token =
-      typeof body?.["token"] === "string" ? body["token"] : "";
+    const token = typeof body?.["token"] === "string" ? body["token"] : "";
     if (!token) {
       return c.json(
-        { data: null, error: { code: "INVITATION_TOKEN_REQUIRED", message: "Invitation token is required." } },
+        {
+          data: null,
+          error: { code: "INVITATION_TOKEN_REQUIRED", message: "Invitation token is required." },
+        },
         400,
       );
     }
@@ -243,10 +256,7 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       select: { email: true },
     });
     if (!user) {
-      return c.json(
-        { data: null, error: { code: "NOT_FOUND", message: "User not found." } },
-        404,
-      );
+      return c.json({ data: null, error: { code: "NOT_FOUND", message: "User not found." } }, 404);
     }
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const invitation = await prisma.organizationInvitation.findUnique({
@@ -272,9 +282,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
         {
           data: null,
           error: {
-            code: invitation && invitation.email !== user.email.toLowerCase()
-              ? "INVITATION_EMAIL_MISMATCH"
-              : "INVITATION_NOT_ACTIVE",
+            code:
+              invitation && invitation.email !== user.email.toLowerCase()
+                ? "INVITATION_EMAIL_MISMATCH"
+                : "INVITATION_NOT_ACTIVE",
             message: "Invitation is invalid, expired, or belongs to another email address.",
           },
         },
@@ -298,10 +309,7 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
         select: { id: true, scimActive: true },
       });
       if (!existing || !existing.scimActive) {
-        const entitlements = await resolveOrganizationEntitlements(
-          invitation.organizationId,
-          tx,
-        );
+        const entitlements = await resolveOrganizationEntitlements(invitation.organizationId, tx);
         const activeMembers = await tx.organizationMember.count({
           where: {
             organizationId: invitation.organizationId,
@@ -334,13 +342,22 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
     });
     if ("limitReached" in membership) {
       return c.json(
-        { data: null, error: { code: "TEAM_MEMBER_LIMIT_REACHED", message: "The organization has reached its member limit." } },
+        {
+          data: null,
+          error: {
+            code: "TEAM_MEMBER_LIMIT_REACHED",
+            message: "The organization has reached its member limit.",
+          },
+        },
         403,
       );
     }
     if ("inactive" in membership) {
       return c.json(
-        { data: null, error: { code: "INVITATION_NOT_ACTIVE", message: "Invitation is no longer active." } },
+        {
+          data: null,
+          error: { code: "INVITATION_NOT_ACTIVE", message: "Invitation is no longer active." },
+        },
         409,
       );
     }
@@ -351,7 +368,10 @@ export function registerOnboardingRoutes(app: Hono<AppEnv>): void {
       metadata: { invitationId: invitation.id, role },
     });
     return c.json(
-      { data: { organizationId: invitation.organizationId, role: membership.member.role }, error: null },
+      {
+        data: { organizationId: invitation.organizationId, role: membership.member.role },
+        error: null,
+      },
       200,
     );
   });

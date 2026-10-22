@@ -65,11 +65,12 @@ export function AcceptInvitation() {
         className="w-full rounded-xl border border-slate-200 bg-white p-8 shadow-sm"
       >
         <h1 className="text-2xl font-semibold text-slate-950">Accept organization invitation</h1>
-        <p className={`mt-4 text-sm ${failed ? "text-red-700" : "text-slate-600"}`}>
-          {message}
-        </p>
+        <p className={`mt-4 text-sm ${failed ? "text-red-700" : "text-slate-600"}`}>{message}</p>
         {failed && (
-          <Link className="mt-6 inline-block font-medium text-blue-700 underline" href="/api/auth/github/login?redirectTo=%2Fdashboard">
+          <Link
+            className="mt-6 inline-block font-medium text-blue-700 underline"
+            href="/api/auth/github/login?redirectTo=%2Fdashboard"
+          >
             Sign in with GitHub
           </Link>
         )}

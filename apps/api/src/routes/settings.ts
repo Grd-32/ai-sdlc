@@ -282,15 +282,11 @@ export function registerSettingsRoutes(app: Hono<AppEnv>): void {
       }
       const body: unknown = await c.req.json().catch(() => null);
       const confirmOrganizationSlug =
-        typeof body === "object" &&
-        body !== null &&
-        "confirmOrganizationSlug" in body
+        typeof body === "object" && body !== null && "confirmOrganizationSlug" in body
           ? body.confirmOrganizationSlug
           : null;
       const externalCleanupConfirmed =
-        typeof body === "object" &&
-        body !== null &&
-        "externalCleanupConfirmed" in body
+        typeof body === "object" && body !== null && "externalCleanupConfirmed" in body
           ? body.externalCleanupConfirmed
           : false;
       const externalCleanupSummary =
@@ -335,7 +331,10 @@ export function registerSettingsRoutes(app: Hono<AppEnv>): void {
       }
       if (request.status !== "PENDING") {
         return c.json(
-          { data: null, error: { code: "DELETION_REQUEST_NOT_PENDING", message: "Request is not pending." } },
+          {
+            data: null,
+            error: { code: "DELETION_REQUEST_NOT_PENDING", message: "Request is not pending." },
+          },
           409,
         );
       }

@@ -147,24 +147,23 @@ export function SsoSettings({
 
   async function toggleProvider(provider: IdentityProvider) {
     await run(async () => {
-      await request(
-        `${root}/identity-providers/${encodeURIComponent(provider.id)}`,
-        "PATCH",
-        { enabled: !provider.enabled },
-      );
+      await request(`${root}/identity-providers/${encodeURIComponent(provider.id)}`, "PATCH", {
+        enabled: !provider.enabled,
+      });
       await refresh();
     });
   }
 
   async function removeProvider(provider: IdentityProvider) {
-    if (!window.confirm(`Delete the ${provider.name} identity provider? Existing federated sessions will be revoked.`)) {
+    if (
+      !window.confirm(
+        `Delete the ${provider.name} identity provider? Existing federated sessions will be revoked.`,
+      )
+    ) {
       return;
     }
     await run(async () => {
-      await request(
-        `${root}/identity-providers/${encodeURIComponent(provider.id)}`,
-        "DELETE",
-      );
+      await request(`${root}/identity-providers/${encodeURIComponent(provider.id)}`, "DELETE");
       await refresh();
       setNotice("Identity provider deleted.");
     });
@@ -181,11 +180,9 @@ export function SsoSettings({
 
   async function toggleEnforcement() {
     await run(async () => {
-      const result = await request<{ ssoEnforced: boolean }>(
-        `${root}/sso-settings`,
-        "PATCH",
-        { ssoEnforced: !ssoEnforced },
-      );
+      const result = await request<{ ssoEnforced: boolean }>(`${root}/sso-settings`, "PATCH", {
+        ssoEnforced: !ssoEnforced,
+      });
       setSsoEnforced(result.ssoEnforced);
       setNotice(
         result.ssoEnforced
@@ -209,12 +206,18 @@ export function SsoSettings({
       </div>
 
       {error && (
-        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+        >
           {error}
         </p>
       )}
       {notice && (
-        <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+        <p
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
+        >
           {notice}
         </p>
       )}
@@ -225,7 +228,9 @@ export function SsoSettings({
           Only verified domains may be used to match an existing organization member during SSO.
         </p>
         <form onSubmit={addDomain} className="mt-4 flex flex-col gap-2 sm:flex-row">
-          <label className="sr-only" htmlFor="sso-domain">Email domain</label>
+          <label className="sr-only" htmlFor="sso-domain">
+            Email domain
+          </label>
           <input
             id="sso-domain"
             className={`${inputClass} mt-0`}
@@ -234,34 +239,51 @@ export function SsoSettings({
             placeholder="example.com"
             required
           />
-          <button className={buttonClass} disabled={busy}>Request TXT challenge</button>
+          <button className={buttonClass} disabled={busy}>
+            Request TXT challenge
+          </button>
         </form>
         {challenge && (
           <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm">
             <p className="font-medium">Publish this DNS TXT record:</p>
             <dl className="mt-2 grid gap-1 sm:grid-cols-[5rem_1fr]">
-              <dt className="text-slate-500">Name</dt><dd className="break-all font-mono">{challenge.name}</dd>
-              <dt className="text-slate-500">Value</dt><dd className="break-all font-mono">{challenge.value}</dd>
+              <dt className="text-slate-500">Name</dt>
+              <dd className="break-all font-mono">{challenge.name}</dd>
+              <dt className="text-slate-500">Value</dt>
+              <dd className="break-all font-mono">{challenge.value}</dd>
             </dl>
           </div>
         )}
         <ul className="mt-4 divide-y divide-slate-100">
           {domains.map((item) => (
-            <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
+            <li
+              key={item.id}
+              className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"
+            >
               <span>{item.domain}</span>
               {item.verified ? (
                 <span className="text-emerald-700">Verified</span>
               ) : (
-                <button className={buttonClass} disabled={busy} onClick={() => void verifyDomain(item.id)}>
+                <button
+                  className={buttonClass}
+                  disabled={busy}
+                  onClick={() => void verifyDomain(item.id)}
+                >
                   Verify TXT record
                 </button>
               )}
-              <button className={buttonClass} disabled={busy} onClick={() => void removeDomain(item)}>
+              <button
+                className={buttonClass}
+                disabled={busy}
+                onClick={() => void removeDomain(item)}
+              >
                 Remove
               </button>
             </li>
           ))}
-          {domains.length === 0 && <li className="py-3 text-sm text-slate-500">No domains configured.</li>}
+          {domains.length === 0 && (
+            <li className="py-3 text-sm text-slate-500">No domains configured.</li>
+          )}
         </ul>
       </div>
 
@@ -269,10 +291,14 @@ export function SsoSettings({
         <h3 className="font-medium text-slate-900">Identity providers</h3>
         <ul className="mt-3 divide-y divide-slate-100">
           {providers.map((provider) => (
-            <li key={provider.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+            <li
+              key={provider.id}
+              className="flex flex-wrap items-center justify-between gap-3 py-3"
+            >
               <div>
                 <p className="text-sm font-medium text-slate-900">
-                  {provider.name} <span className="font-normal text-slate-500">({provider.type})</span>
+                  {provider.name}{" "}
+                  <span className="font-normal text-slate-500">({provider.type})</span>
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
                   {provider.enabled ? "Enabled" : "Disabled"} ·{" "}
@@ -298,16 +324,26 @@ export function SsoSettings({
                     Test sign-in
                   </a>
                 )}
-                <button className={buttonClass} disabled={busy} onClick={() => void toggleProvider(provider)}>
+                <button
+                  className={buttonClass}
+                  disabled={busy}
+                  onClick={() => void toggleProvider(provider)}
+                >
                   {provider.enabled ? "Disable" : "Enable"}
                 </button>
-                <button className={buttonClass} disabled={busy} onClick={() => void removeProvider(provider)}>
+                <button
+                  className={buttonClass}
+                  disabled={busy}
+                  onClick={() => void removeProvider(provider)}
+                >
                   Delete
                 </button>
               </div>
             </li>
           ))}
-          {providers.length === 0 && <li className="py-3 text-sm text-slate-500">No identity providers configured.</li>}
+          {providers.length === 0 && (
+            <li className="py-3 text-sm text-slate-500">No identity providers configured.</li>
+          )}
         </ul>
 
         <form onSubmit={addProvider} className="mt-5 space-y-3 border-t border-slate-200 pt-4">
@@ -323,24 +359,76 @@ export function SsoSettings({
               <option value="SAML">SAML 2.0</option>
             </select>
           </label>
-          <label className="block text-sm">Display name<input className={inputClass} name="name" required maxLength={120} /></label>
+          <label className="block text-sm">
+            Display name
+            <input className={inputClass} name="name" required maxLength={120} />
+          </label>
           {providerType === "OIDC" ? (
             <>
-              <label className="block text-sm">Issuer URL<input className={inputClass} name="issuer" type="url" placeholder="https://idp.example.com" required /></label>
-              <label className="block text-sm">Client ID<input className={inputClass} name="clientId" required /></label>
-              <label className="block text-sm">Client secret<input className={inputClass} name="clientSecret" type="password" autoComplete="new-password" required /></label>
-              <p className="text-xs text-slate-500">Allowed OIDC issuers must also be approved in the service&apos;s SSO issuer allowlist.</p>
-              <p className="text-xs text-slate-500">Register this exact redirect URI with your IdP: https://your-nomalog-domain/api/auth/sso/oidc/callback</p>
+              <label className="block text-sm">
+                Issuer URL
+                <input
+                  className={inputClass}
+                  name="issuer"
+                  type="url"
+                  placeholder="https://idp.example.com"
+                  required
+                />
+              </label>
+              <label className="block text-sm">
+                Client ID
+                <input className={inputClass} name="clientId" required />
+              </label>
+              <label className="block text-sm">
+                Client secret
+                <input
+                  className={inputClass}
+                  name="clientSecret"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                />
+              </label>
+              <p className="text-xs text-slate-500">
+                Allowed OIDC issuers must also be approved in the service&apos;s SSO issuer
+                allowlist.
+              </p>
+              <p className="text-xs text-slate-500">
+                Register this exact redirect URI with your IdP:
+                https://your-nomalog-domain/api/auth/sso/oidc/callback
+              </p>
             </>
           ) : (
             <>
-              <label className="block text-sm">IdP issuer/entity ID<input className={inputClass} name="idpIssuer" required /></label>
-              <label className="block text-sm">IdP SSO URL<input className={inputClass} name="entryPoint" type="url" placeholder="https://idp.example.com/sso" required /></label>
-              <label className="block text-sm">IdP signing certificate (PEM)<textarea className={inputClass} name="idpCertificate" rows={5} required /></label>
-              <p className="text-xs text-slate-500">Configure the IdP ACS URL as {`https://your-nomalog-domain/api/auth/sso/saml/callback`}. Service-provider metadata is available after saving.</p>
+              <label className="block text-sm">
+                IdP issuer/entity ID
+                <input className={inputClass} name="idpIssuer" required />
+              </label>
+              <label className="block text-sm">
+                IdP SSO URL
+                <input
+                  className={inputClass}
+                  name="entryPoint"
+                  type="url"
+                  placeholder="https://idp.example.com/sso"
+                  required
+                />
+              </label>
+              <label className="block text-sm">
+                IdP signing certificate (PEM)
+                <textarea className={inputClass} name="idpCertificate" rows={5} required />
+              </label>
+              <p className="text-xs text-slate-500">
+                Configure the IdP ACS URL as{" "}
+                {`https://your-nomalog-domain/api/auth/sso/saml/callback`}. Service-provider
+                metadata is available after saving.
+              </p>
             </>
           )}
-          <button className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50" disabled={busy}>
+          <button
+            className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
+            disabled={busy}
+          >
             Save provider
           </button>
         </form>
@@ -350,7 +438,9 @@ export function SsoSettings({
         <div>
           <h3 className="font-medium text-slate-900">SSO enforcement</h3>
           <p className="mt-1 text-sm text-slate-600">
-            {ssoEnforced ? "Required for organization access." : "Not enforced; existing sign-in methods remain available."}
+            {ssoEnforced
+              ? "Required for organization access."
+              : "Not enforced; existing sign-in methods remain available."}
           </p>
         </div>
         <button className={buttonClass} disabled={busy} onClick={() => void toggleEnforcement()}>

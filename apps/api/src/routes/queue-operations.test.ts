@@ -53,24 +53,32 @@ describe("internal queue operations", () => {
       }),
       getJobs: vi.fn().mockImplementation((states: string[]) => {
         if (states[0] === "waiting") {
-          return Promise.resolve([{ id: "oldest", name: "analyze", timestamp: Date.now() - 60_000 }]);
+          return Promise.resolve([
+            { id: "oldest", name: "analyze", timestamp: Date.now() - 60_000 },
+          ]);
         }
         if (states[0] === "active") {
-          return Promise.resolve([{ id: "active-1", name: "webhook", timestamp: Date.now() - 1_000 }]);
+          return Promise.resolve([
+            { id: "active-1", name: "webhook", timestamp: Date.now() - 1_000 },
+          ]);
         }
-        return Promise.resolve([{
-          id: "failed-1",
-          name: "assessment",
-          timestamp: Date.now() - 10_000,
-          finishedOn: Date.now() - 5_000,
-        }]);
+        return Promise.resolve([
+          {
+            id: "failed-1",
+            name: "assessment",
+            timestamp: Date.now() - 10_000,
+            finishedOn: Date.now() - 5_000,
+          },
+        ]);
       }),
     });
     mocks.getRedisConnection.mockReturnValue({
       get: vi.fn().mockImplementation((key: string) => {
         if (key.endsWith("worker:heartbeat")) {
           const now = new Date().toISOString();
-          return Promise.resolve(JSON.stringify({ instanceId: "worker-1", startedAt: now, lastSeenAt: now }));
+          return Promise.resolve(
+            JSON.stringify({ instanceId: "worker-1", startedAt: now, lastSeenAt: now }),
+          );
         }
         if (key.endsWith("stalled-count")) return Promise.resolve("2");
         if (key.endsWith("stalled-last-seen")) return Promise.resolve("2026-10-21T00:00:00.000Z");

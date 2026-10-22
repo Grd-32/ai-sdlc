@@ -18,9 +18,7 @@ function normalizeDomain(value: string): string | null {
   ) {
     return null;
   }
-  if (
-    domain.split(".").some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
-  ) {
+  if (domain.split(".").some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
     return null;
   }
   return domain;
@@ -47,8 +45,7 @@ export function registerOrganizationDomainRoutes(app: Hono<AppEnv>): void {
     requireOrganizationRole("ADMIN"),
     async (c) => {
       const body = await readJsonObject(c);
-      const domain =
-        typeof body?.domain === "string" ? normalizeDomain(body.domain) : null;
+      const domain = typeof body?.domain === "string" ? normalizeDomain(body.domain) : null;
       if (!domain) {
         return c.json(
           { data: null, error: { code: "INVALID_DOMAIN", message: "Enter a valid domain name." } },
@@ -64,7 +61,10 @@ export function registerOrganizationDomainRoutes(app: Hono<AppEnv>): void {
       });
       if (existing?.verified) {
         return c.json(
-          { data: null, error: { code: "DOMAIN_ALREADY_VERIFIED", message: "Domain is already verified." } },
+          {
+            data: null,
+            error: { code: "DOMAIN_ALREADY_VERIFIED", message: "Domain is already verified." },
+          },
           409,
         );
       }
@@ -78,19 +78,22 @@ export function registerOrganizationDomainRoutes(app: Hono<AppEnv>): void {
             data: { organizationId, domain, verificationToken: token },
           });
 
-      return c.json({
-        data: {
-          id: record.id,
-          domain,
-          verified: false,
-          dnsRecord: {
-            type: "TXT",
-            name: `_nomalog-verification.${domain}`,
-            value: `nomalog-verify=${token}`,
+      return c.json(
+        {
+          data: {
+            id: record.id,
+            domain,
+            verified: false,
+            dnsRecord: {
+              type: "TXT",
+              name: `_nomalog-verification.${domain}`,
+              value: `nomalog-verify=${token}`,
+            },
           },
+          error: null,
         },
-        error: null,
-      }, existing ? 200 : 201);
+        existing ? 200 : 201,
+      );
     },
   );
 
@@ -112,7 +115,10 @@ export function registerOrganizationDomainRoutes(app: Hono<AppEnv>): void {
       if (domain.verified) return c.json({ data: { id: domain.id, verified: true }, error: null });
       if (!domain.verificationToken) {
         return c.json(
-          { data: null, error: { code: "VERIFICATION_NOT_STARTED", message: "Request a DNS challenge first." } },
+          {
+            data: null,
+            error: { code: "VERIFICATION_NOT_STARTED", message: "Request a DNS challenge first." },
+          },
           409,
         );
       }
@@ -127,13 +133,25 @@ export function registerOrganizationDomainRoutes(app: Hono<AppEnv>): void {
             : "DNS_LOOKUP_FAILED";
         if (code === "ENODATA" || code === "ENOTFOUND") {
           return c.json(
-            { data: null, error: { code: "DNS_CHALLENGE_NOT_FOUND", message: "The DNS TXT challenge was not found. Confirm the record and try again." } },
+            {
+              data: null,
+              error: {
+                code: "DNS_CHALLENGE_NOT_FOUND",
+                message: "The DNS TXT challenge was not found. Confirm the record and try again.",
+              },
+            },
             409,
           );
         }
         console.error("[organization-domains] DNS verification lookup failed", { code });
         return c.json(
-          { data: null, error: { code: "DNS_LOOKUP_FAILED", message: "DNS verification could not be completed; retry later." } },
+          {
+            data: null,
+            error: {
+              code: "DNS_LOOKUP_FAILED",
+              message: "DNS verification could not be completed; retry later.",
+            },
+          },
           502,
         );
       }
@@ -141,7 +159,13 @@ export function registerOrganizationDomainRoutes(app: Hono<AppEnv>): void {
       const expected = `nomalog-verify=${domain.verificationToken}`;
       if (!txtRecords.flat().includes(expected)) {
         return c.json(
-          { data: null, error: { code: "DNS_CHALLENGE_MISMATCH", message: "The DNS TXT value does not match the current challenge." } },
+          {
+            data: null,
+            error: {
+              code: "DNS_CHALLENGE_MISMATCH",
+              message: "The DNS TXT value does not match the current challenge.",
+            },
+          },
           409,
         );
       }
@@ -156,7 +180,10 @@ export function registerOrganizationDomainRoutes(app: Hono<AppEnv>): void {
         eventType: "ORGANIZATION_DOMAIN_VERIFIED",
         metadata: { domain: domain.domain },
       });
-      return c.json({ data: { id: domain.id, domain: domain.domain, verified: true }, error: null });
+      return c.json({
+        data: { id: domain.id, domain: domain.domain, verified: true },
+        error: null,
+      });
     },
   );
 
@@ -188,7 +215,14 @@ export function registerOrganizationDomainRoutes(app: Hono<AppEnv>): void {
         ]);
         if (organization?.ssoEnforced && otherVerifiedDomains === 0) {
           return c.json(
-            { data: null, error: { code: "SSO_DOMAIN_REQUIRED", message: "Disable SSO enforcement or verify another domain before removing this domain." } },
+            {
+              data: null,
+              error: {
+                code: "SSO_DOMAIN_REQUIRED",
+                message:
+                  "Disable SSO enforcement or verify another domain before removing this domain.",
+              },
+            },
             409,
           );
         }

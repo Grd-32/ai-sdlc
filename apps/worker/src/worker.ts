@@ -11,9 +11,7 @@ let connection: Redis | undefined;
 let heartbeatTimer: NodeJS.Timeout | undefined;
 let lastHeartbeatValue: string | undefined;
 const workerInstanceId = randomUUID();
-const operationsKeyPrefix = process.env["BULLMQ_PREFIX"]
-  ? `${process.env["BULLMQ_PREFIX"]}:`
-  : "";
+const operationsKeyPrefix = process.env["BULLMQ_PREFIX"] ? `${process.env["BULLMQ_PREFIX"]}:` : "";
 const heartbeatKey = `${operationsKeyPrefix}nomalog:worker:heartbeat`;
 const stalledCountKey = `${operationsKeyPrefix}nomalog:worker:stalled-count`;
 const stalledLastSeenKey = `${operationsKeyPrefix}nomalog:worker:stalled-last-seen`;

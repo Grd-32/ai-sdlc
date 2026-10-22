@@ -56,12 +56,12 @@ export function registerOrganizationRoutes(app: Hono<AppEnv>): void {
           );
         })
         .map((m) => ({
-        id: m.organization.id,
-        name: m.organization.name,
-        slug: m.organization.slug,
-        policyApprovalQuorum: m.organization.policyApprovalQuorum,
-        role: m.role,
-        ssoEnforced: m.organization.ssoEnforced,
+          id: m.organization.id,
+          name: m.organization.name,
+          slug: m.organization.slug,
+          policyApprovalQuorum: m.organization.policyApprovalQuorum,
+          role: m.role,
+          ssoEnforced: m.organization.ssoEnforced,
         })),
       error: null,
     });

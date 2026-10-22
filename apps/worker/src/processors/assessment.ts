@@ -143,7 +143,7 @@ export function summarizeAssessmentProvenance(
       confidence: invalidConfidence ? null : (signal?.confidence ?? null),
       limitations: invalidConfidence
         ? "The recorded confidence was outside the valid 0-1 range and was excluded."
-        : signal?.limitations ?? null,
+        : (signal?.limitations ?? null),
     };
   });
 

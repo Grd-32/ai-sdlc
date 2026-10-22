@@ -48,11 +48,7 @@ function configurationError(type: string, body: Record<string, unknown>) {
         : "";
   const idpCertificate =
     typeof values["idpCertificate"] === "string" ? values["idpCertificate"].trim() : "";
-  if (
-    !entryPoint ||
-    !idpIssuer ||
-    !idpCertificate
-  ) {
+  if (!entryPoint || !idpIssuer || !idpCertificate) {
     return "SAML requires entryPoint, idpIssuer, and idpCertificate configuration.";
   }
   try {
@@ -129,7 +125,10 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
       const invalidConfiguration = configurationError(type, body ?? {});
       if (invalidConfiguration) {
         return c.json(
-          { data: null, error: { code: "INVALID_IDP_CONFIGURATION", message: invalidConfiguration } },
+          {
+            data: null,
+            error: { code: "INVALID_IDP_CONFIGURATION", message: invalidConfiguration },
+          },
           400,
         );
       }
@@ -210,7 +209,8 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
         ssoTestedAt?: null;
       } = {};
 
-      if (typeof body?.["name"] === "string" && body["name"].trim()) data.name = body["name"].trim();
+      if (typeof body?.["name"] === "string" && body["name"].trim())
+        data.name = body["name"].trim();
       if (typeof body?.["issuer"] === "string") data.issuer = body["issuer"].trim() || null;
       if (typeof body?.["clientId"] === "string") data.clientId = body["clientId"].trim() || null;
       if (typeof body?.["clientSecret"] === "string" && body["clientSecret"]) {
@@ -274,9 +274,7 @@ export function registerIdentityProviderRoutes(app: Hono<AppEnv>): void {
       });
 
       const { clientSecretEncrypted: _secret, ...safeProvider } = provider;
-      return c.json(
-        { data: { ...safeProvider, secretConfigured: Boolean(_secret) }, error: null },
-      );
+      return c.json({ data: { ...safeProvider, secretConfigured: Boolean(_secret) }, error: null });
     },
   );
 
